@@ -36,3 +36,9 @@ jobs:
         with:
           name: DeskCal-1.0.3-x64-${{ matrix.os }}
           path: Windows/bin/Release/net48/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Calendar-preview-${{ matrix.os }}
+          path: ${{ runner.temp }}/DeskCal.png
+          if-no-files-found: ignore

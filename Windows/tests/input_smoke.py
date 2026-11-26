@@ -95,6 +95,10 @@ class Widget:
         self.hwnd = None
         try:
             self.hwnd = wait(lambda: find(None, "DeskCal 1.0.3"), "window", 30)
+            # Start the dedicated input run on a visible widget even when a
+            # provisioning window holds the foreground lock at runner startup.
+            key(0x12, 0, 0, 0)
+            key(0x12, 0, 2, 0)
             foreground(self.hwnd)
             self.until("document.querySelectorAll('.cell').length===42")
         except BaseException:
@@ -122,7 +126,16 @@ class Widget:
         corner, size = W.POINT(), W.RECT()
         assert origin(self.hwnd, C.byref(corner)) and rect(self.hwnd, C.byref(size))
         point = W.POINT(round(corner.x + x*dpi), round(corner.y + size.bottom - (height-y)*dpi))
-        assert root(at(point), 2) == self.hwnd, "Another HWND receives the pointer at " + selector
+        target = root(at(point), 2)
+        if target != self.hwnd:
+            title = C.create_unicode_buffer(256)
+            cls = C.create_unicode_buffer(256)
+            u.GetWindowTextW(target, title, len(title))
+            u.GetClassNameW(target, cls, len(cls))
+            raise AssertionError(f"{selector} at {point.x},{point.y} targets {ascii(title.value)} "
+                                 f"({cls.value}); widget origin {corner.x},{corner.y}, "
+                                 f"client {size.right}x{size.bottom}, CSS {x},{y}/{height}, dpr {dpi}, "
+                                 f"foreground {active()}, target {target}, widget {self.hwnd}")
         return point
 
     def click(self, selector):
@@ -147,6 +160,23 @@ class Widget:
             self.proc.wait()
 
 
+def capture(hwnd):
+    pos, bounds = W.POINT(), W.RECT()
+    assert origin(hwnd, C.byref(pos)) and rect(hwnd, C.byref(bounds))
+    # Only capture the empty test calendar's client area on the hosted runner.
+    script = f"""
+      Add-Type -AssemblyName System.Drawing
+      $bmp = New-Object Drawing.Bitmap({bounds.right},{bounds.bottom})
+      $g = [Drawing.Graphics]::FromImage($bmp)
+      try {{
+        $g.CopyFromScreen({pos.x},{pos.y},0,0,$bmp.Size)
+        $bmp.Save((Join-Path $env:RUNNER_TEMP 'DeskCal.png'),[Drawing.Imaging.ImageFormat]::Png)
+      }} finally {{ $g.Dispose(); $bmp.Dispose() }}
+    """
+    subprocess.run(["powershell", "-NoProfile", "-Command", script],
+                   creationflags=subprocess.CREATE_NO_WINDOW, check=True)
+
+
 def type_letters(word):
     for letter in word:
         vk = ord(letter.upper())
@@ -165,6 +195,8 @@ def run(exe, profile):
         assert get_material(app.hwnd, 38, C.byref(material), C.sizeof(material)) == 0
         assert material.value == 3, f"Expected Desktop Acrylic, got {material.value}"
         print("Initial profile empty; Acrylic, tool-window and normal input styles verified.", flush=True)
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            capture(app.hwnd)
         month = app.js("document.querySelector('#title-main').textContent")
         app.click("#next")
         assert app.js("document.querySelector('#title-main').textContent") != month
