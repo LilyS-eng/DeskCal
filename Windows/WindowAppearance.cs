@@ -38,11 +38,16 @@ namespace DeskCal
             source = (HwndSource)PresentationSource.FromVisual(window);
             IntPtr hwnd = source.Handle;
             // Limit the change to shell switcher visibility on the top-level HWND.
-            SetWindowLong(hwnd, ExtendedStyle, GetWindowLong(hwnd, ExtendedStyle) | ToolWindow);
+            MarkToolWindow(hwnd);
             int rounded = 2; // DWMWCP_ROUND
             DwmSetWindowAttribute(hwnd, CornerPreference, ref rounded, sizeof(int));
             Conceal();
             Apply(true, false);
+        }
+
+        public static void MarkToolWindow(IntPtr hwnd)
+        {
+            SetWindowLong(hwnd, ExtendedStyle, GetWindowLong(hwnd, ExtendedStyle) | ToolWindow);
         }
 
         public void Conceal()

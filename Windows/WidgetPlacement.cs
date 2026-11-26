@@ -67,7 +67,7 @@ namespace DeskCal
             state = edge.HasValue ? DisplayState.EdgeDockedVisible : DisplayState.Normal;
             UpdateCollapseButton();
             if (edge.HasValue)
-                MoveIntoWorkArea(bounds.Right - bounds.Left, bounds.Bottom - bounds.Top, initial: false);
+                Resize((int)Math.Round(main.Width), (int)Math.Round(main.Height));
             return edge.HasValue;
         }
 
@@ -143,11 +143,15 @@ namespace DeskCal
             };
             System.Windows.Automation.AutomationProperties.SetName(button, "展开 DeskCal");
             button.Click += (_, __) => expand();
-            return new Window {
+            var window = new Window {
                 Title = "DeskCal 边缘把手", Width = TabWidth, Height = TabHeight, Content = button,
                 WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize,
-                ShowInTaskbar = false, ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual
+                ShowInTaskbar = false, ShowActivated = false, Topmost = true,
+                WindowStartupLocation = WindowStartupLocation.Manual
             };
+            window.SourceInitialized += (_, __) =>
+                WindowAppearance.MarkToolWindow(new WindowInteropHelper(window).Handle);
+            return window;
         }
 
         private void UpdateCollapseButton()

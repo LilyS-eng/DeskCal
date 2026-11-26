@@ -270,8 +270,15 @@ def test_edges(app):
         else:
             assert abs(x2-work.right) <= 2, (x1, x2)
         assert y2-y1 > 40 and x2-x1 > 8
-        mouse_click((x1+x2)//2, (y1+y2)//2)
-        wait(lambda: presented(app.hwnd) and not visible(tab), "edge tab expands calendar")
+        x,y = (x1+x2)//2, (y1+y2)//2
+        wait(lambda: root(at(W.POINT(x,y)),2) == tab, f"{side} tab at {(x,y)} receives hit test")
+        mouse_click(x,y)
+        try:
+            wait(lambda: presented(app.hwnd) and not visible(tab), "edge tab expands calendar")
+        except AssertionError:
+            print(f"{side} tab: shown={visible(tab)}, main shown={visible(app.hwnd)},"
+                  f" presented={presented(app.hwnd)}, foreground={active()}",flush=True)
+            raise
         expected_left = work.left if side=="left" else work.right-width
         assert window_geometry(app.hwnd) == (expected_left,top,expected_left+width,bottom)
         assert_acrylic(app.hwnd)
@@ -311,6 +318,23 @@ def probe_backdrop(app):
             print("Backdrop probe: hosted compositor pixel result inconclusive.", red, blue, flush=True)
     finally:
         app.js("backdrop:off")
+
+
+def drag_resize(app):
+    left,top,right,bottom = window_geometry(app.hwnd)
+    point = app.point("#grip")
+    assert move(point.x,point.y)
+    mouse(2,0,0,0,0)
+    time.sleep(.2)
+    for step in range(1,6):
+        assert move(point.x-6*step,point.y-4*step)
+        time.sleep(.045)
+    mouse(4,0,0,0,0)
+    wait(lambda: window_geometry(app.hwnd)[2] < right-12, "browser drag updates window width")
+    wait(lambda: window_geometry(app.hwnd)[3] < bottom-8, "browser drag updates window height")
+    assert_acrylic(app.hwnd)
+    app.until("Number.isInteger(S.settings.winWidth) && Number.isInteger(S.settings.winHeight)")
+    print("PASS: actual pointer resize applies and saves both axes with Acrylic enabled.",flush=True)
 
 
 def test_size(app):
@@ -444,6 +468,7 @@ def run(exe, profile):
         assert down>=18 and clicks>=18
         print(f"PASS: {down} OS pointer downs, {clicks} clicks, editor focus/typing, dialogs, views, scroll, focus return.", flush=True)
         probe_backdrop(app)
+        drag_resize(app)
         test_size(app)
         test_edges(app)
     finally:
