@@ -2,6 +2,9 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Windows.Interop;
+using System.Windows.Media;
 using Forms = System.Windows.Forms;
 using System.Text;
 using System.Threading;
@@ -15,6 +18,34 @@ using Microsoft.Web.WebView2.Wpf;
 // on stdin/stdout. All mouse, keyboard and focus actions come from Windows.
 internal class InputObserver
 {
+    private static Window backing;
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y,
+        int width, int height, uint flags);
+
+    private static void SetBackdropProbe(Window widget, string color)
+    {
+        if (color == "off")
+        {
+            if (backing != null) backing.Close();
+            backing = null;
+            return;
+        }
+        if (backing == null)
+        {
+            backing = new Window {
+                WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize,
+                ShowInTaskbar = false, ShowActivated = false,
+                Left = widget.Left, Top = widget.Top, Width = widget.Width, Height = widget.Height
+            };
+            backing.Show();
+            SetWindowPos(new WindowInteropHelper(backing).Handle, new WindowInteropHelper(widget).Handle,
+                         0, 0, 0, 0, 0x13); // NOMOVE | NOSIZE | NOACTIVATE
+        }
+        backing.Background = color == "red" ? Brushes.Red : Brushes.Blue;
+    }
+
     [STAThread]
     private static int Main(string[] args)
     {
@@ -47,6 +78,11 @@ internal class InputObserver
     private static Task<string> Inspect(string expression)
     {
         var app = Application.Current;
+        if (expression.StartsWith("backdrop:"))
+        {
+            SetBackdropProbe(app.MainWindow, expression.Substring("backdrop:".Length));
+            return Task.FromResult("true");
+        }
         if (expression.StartsWith("tray:"))
         {
             var widget = app.MainWindow;

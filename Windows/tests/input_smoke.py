@@ -292,8 +292,31 @@ def test_edges(app):
     print("PASS: actual mouse left/right snap, click expand, collapse, undock and tray transitions.", flush=True)
 
 
+def probe_backdrop(app):
+    # The hosted display can force Acrylic fallback. Record compositor pixel
+    # changes independently of the DWM attribute, without input to DeskCal.
+    left, top, right, bottom = window_geometry(app.hwnd)
+    points = [(left+105,top+10),(left+47,bottom-34)]
+    try:
+        app.js("backdrop:red")
+        time.sleep(.35)
+        red = [screen_pixel(x,y) for x,y in points]
+        app.js("backdrop:blue")
+        time.sleep(.35)
+        blue = [screen_pixel(x,y) for x,y in points]
+        assert window_geometry(app.hwnd)==(left,top,right,bottom)
+        if red[1] != blue[1]:
+            print("Backdrop probe: visible pixel below WebView2 changed without input or resize.", red, blue, flush=True)
+        else:
+            print("Backdrop probe: hosted compositor pixel result inconclusive.", red, blue, flush=True)
+    finally:
+        app.js("backdrop:off")
+
+
 def test_size(app):
     app.click("#gear")
+    app.until("document.querySelector('#panel').classList.contains('open')")
+    app.js("document.querySelector('#panel').scrollTop=0")
     original = window_geometry(app.hwnd)
     submit = "#window-size button"
     app.click("#win-width")
@@ -420,6 +443,7 @@ def run(exe, profile):
         down, clicks = app.js("window.deskcalInputStatus()")
         assert down>=18 and clicks>=18
         print(f"PASS: {down} OS pointer downs, {clicks} clicks, editor focus/typing, dialogs, views, scroll, focus return.", flush=True)
+        probe_backdrop(app)
         test_size(app)
         test_edges(app)
     finally:
