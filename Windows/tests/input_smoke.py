@@ -8,7 +8,6 @@ from ctypes import wintypes as W
 import json
 import os
 from pathlib import Path
-import socket
 import subprocess
 import sys
 import tempfile
@@ -82,11 +81,10 @@ def wait(fn, label, seconds=15):
 
 class Widget:
     def __init__(self, exe, profile):
-        with socket.socket() as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
+        port_file = Path(profile) / "EBWebView" / "DevToolsActivePort"
+        port_file.unlink(missing_ok=True)
         env = dict(os.environ, WEBVIEW2_USER_DATA_FOLDER=profile,
-                   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=f"--remote-debugging-port={port}")
+                   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=0 --enable-logging")
         self.proc = subprocess.Popen([exe], env=env)
         self.ws = None
         self.hwnd = None
@@ -97,12 +95,13 @@ class Widget:
                 if self.proc.poll() is not None:
                     raise RuntimeError("DeskCal exited before loading")
                 try:
+                    port = int(port_file.read_text().splitlines()[0])
                     with opener.open(f"http://127.0.0.1:{port}/json/list", timeout=2) as response:
                         pages = json.load(response)
                         targets.update(x.get("url", "") for x in pages)
                         return next((x for x in pages
                                      if x["url"].startswith("https://deskcal.invalid/index.html")), None)
-                except OSError:
+                except (OSError, ValueError, IndexError):
                     return None
             target = wait(page, "WebView2 calendar", 90)
             self.ws = websocket.create_connection(target["webSocketDebuggerUrl"], suppress_origin=True, timeout=8)
@@ -113,6 +112,13 @@ class Widget:
         except BaseException:
             print("Process", self.proc.poll(), "windows", window_texts(self.proc.pid),
                   "CDP pages", targets, "profile files", os.listdir(profile), flush=True)
+            for log in Path(profile).rglob("chrome_debug.log"):
+                print(log.read_text(errors="replace")[-3500:], flush=True)
+            subprocess.run(["powershell", "-NoProfile", "-Command",
+                "Get-Process explorer,DeskCal,msedgewebview2 -ErrorAction SilentlyContinue | "
+                "Format-Table ProcessName,Id,SessionId,MainWindowTitle; "
+                "Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | "
+                "Where-Object { $_.CommandLine -notmatch '--type=' } | Select-Object -ExpandProperty CommandLine"])
             self.close()
             raise
 
