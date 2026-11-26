@@ -94,7 +94,7 @@ class Widget:
         Thread(target=read_output, daemon=True).start()
         self.hwnd = None
         try:
-            self.hwnd = wait(lambda: find(None, "DeskCal 1.0.3"), "window", 30)
+            self.hwnd = wait(lambda: find(None, "DeskCal 1.0.3"), "window", 120)
             # Start the dedicated input run on a visible widget even when a
             # provisioning window holds the foreground lock at runner startup.
             if os.environ.get("GITHUB_ACTIONS") == "true":
@@ -110,7 +110,8 @@ class Widget:
             key(0x12, 0, 0, 0)
             key(0x12, 0, 2, 0)
             foreground(self.hwnd)
-            self.until("document.querySelectorAll('.cell').length===42")
+            wait(lambda: self.js("document.querySelectorAll('.cell').length===42"),
+                 "WebView2 renders the initial calendar", 90)
         except BaseException:
             print("Process", self.proc.poll(), "windows", window_texts(self.proc.pid), flush=True)
             self.close()
@@ -119,7 +120,7 @@ class Widget:
     def js(self, expression):
         self.proc.stdin.write(base64.b64encode(expression.encode()).decode() + "\n")
         self.proc.stdin.flush()
-        line = self.replies.get(timeout=30)
+        line = self.replies.get(timeout=90)
         if line in ("EOF", "ERR"):
             raise RuntimeError("Observer returned " + line)
         return json.loads(base64.b64decode(line))
