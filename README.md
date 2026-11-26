@@ -1,12 +1,44 @@
 # DeskCal
 
-把待办日历贴在 macOS 桌面上的小组件。它在壁纸之上、普通应用窗口之下，安静地待在那儿，不挡工作；露出来的区域可以直接点击勾选。
+适用于 Windows 11 和 macOS 的日历与待办小组件。Windows 1.0.2 使用普通无边框窗口验证鼠标输入；macOS 版显示在桌面层。
 
-原生外壳用 Swift 的 `NSPanel` + `WKWebView`，界面是单文件 `index.html`。所以视觉和交互全在一个网页里，想改什么改什么。
+macOS 外壳用 Swift 的 `NSPanel` + `WKWebView`，Windows 外壳用 WPF + WebView2，两者共用单文件 `index.html`。所以视觉和交互全在一个网页里，想改什么改什么。
 
 数据存在本机 `localStorage`，不需要后端，不联网，没有账号。开箱即用。
 
 ![月视图](docs/screenshot-month.jpg)
+
+## Windows 11 移植版
+
+1.0.2 是普通窗口输入测试版。标准 WPF WebView2 子窗口独占日历区域，支持任务栏、Alt+Tab 及正常激活。顶部细条单独用于移动窗口。此版暂停桌面置底、透明窗口与桌面毛玻璃。
+
+### 打开程序
+
+先从托盘退出旧版，将 x64 压缩包完整解压到新文件夹，再双击 `DeskCal.exe`。右下角显示「DeskCal 1.0.2 · 普通窗口」。运行需要 .NET Framework 4.8 或更高版本和 [Microsoft Edge WebView2 Evergreen 运行时](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)。
+
+### 空白日历与旧版迁移
+
+首次启动时待办为零。1.0.2 使用同一 WebView2 配置目录下独立的个人清单，并沿用旧版分类与外观偏好。若先前保存过待办，在「设置 → 从旧版选择待办」勾选想保留的记录，点「迁移所选」。默认全部不选，可原样保留旧版副本；迁移会保留日期、时间、分类和完成状态，不会在下次启动时重新添加已迁移的条目。当前日历的 JSON 导出只包含当前清单。
+
+### 自行构建
+
+在仓库根目录、装有 .NET SDK 的终端运行：
+
+```powershell
+dotnet build Windows/DeskCal.csproj -c Release
+.\Windows\bin\Release\net48\DeskCal.exe
+```
+
+首次构建会从 NuGet 还原依赖。分发时复制整个 `Windows/bin/Release/net48/` 目录，包括 `web`、`runtimes`、DLL 和许可证。
+
+### 操作及输入排查
+
+- 左右箭头翻页，点月视图的日期进入当天；用日、周、月按钮切换视图。
+- 点「＋」创建待办，点圆圈勾选或恢复。在日视图或「☰ 全部待办」里点「编辑」，可改内容、日期、时间和分类。
+- 点击设置可调整宽度与缩放。用窗口顶部细条移动窗口，从任务栏或 Alt+Tab 返回。可用 Alt+F4 或托盘菜单退出。
+- 若真机点击仍无反应，连点日历和按钮几次，然后右键托盘日历图标选「查看输入诊断」。它显示本次网页加载后收到的按下与点击次数，刷新后计数归零。
+- 真机确认本版能点击后，再逐项验证隐藏任务栏、视觉透明、窗口置底；每次只改一项并复测同一组按钮，同时用其他窗口遮住一部分日历。1.0.2 本身固定为普通窗口。
+- 数据保存在 `%LOCALAPPDATA%\DeskCal\WebView2`。升级和迁移都无需删除此目录。在 Mac 与 Windows 间转移清单可用设置里的 JSON 导入导出。
 
 ## 特性
 
@@ -19,7 +51,7 @@
 7. **完全本地**，断网全功能可用，不产生任何网络请求。
 8. **不占 Dock**，以 `.accessory` 模式运行，只在菜单栏留一个日历图标。
 
-## 快速开始
+## macOS 快速开始
 
 需要 macOS 12 或更高，以及 Xcode 命令行工具。
 
@@ -109,6 +141,7 @@ WKWebView 缓存很激进。外壳加载时在 URL 上带 `_ts` 时间戳并强�
 ```
 DeskCal/
 ├── index.html                  # 组件界面，全部视觉与交互都在这里
+├── Windows/                    # Windows 11 外壳和 .NET 构建项目
 ├── DeskCalApp/
 │   ├── App.swift               # 原生外壳：NSPanel + WKWebView
 │   └── build_app.sh            # 编译 + 打包 + 自签
