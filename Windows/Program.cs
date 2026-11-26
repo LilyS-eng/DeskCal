@@ -33,33 +33,39 @@ namespace DeskCal
     internal sealed class Widget : Window
     {
         private const string Host = "deskcal.invalid";
-        private const string Page = "https://" + Host + "/index.html?widget=1&host=windows&build=1.0.2";
+        private const string Page = "https://" + Host + "/index.html?widget=1&host=windows&build=1.0.3";
         private readonly string dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DeskCal");
         private readonly WebView2 web = new WebView2();
         private readonly Forms.ContextMenuStrip menu = new Forms.ContextMenuStrip();
         private Forms.NotifyIcon tray;
         private bool closing;
+        private bool firstAppearance = true;
+        private WindowAppearance appearance;
         private const int GripHeight = 12;
 
         public Widget()
         {
-            Title = "DeskCal 1.0.2";
+            Title = "DeskCal 1.0.3";
             Width = 620;
             Height = 520 + GripHeight;
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.NoResize;
-            WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            ShowInTaskbar = true;
-            ShowActivated = true;
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            var work = SystemParameters.WorkArea;
+            Left = Math.Max(work.Left, work.Right - Width - 32);
+            Top = Math.Max(work.Top, work.Bottom - Height - 32);
+            ShowInTaskbar = false;
+            ShowActivated = false;
+            Topmost = false;
             AllowsTransparency = false;
 
-            web.DefaultBackgroundColor = System.Drawing.Color.FromArgb(70, 82, 98);
+            web.DefaultBackgroundColor = System.Drawing.Color.FromArgb(0, 0, 0, 0);
             web.AllowExternalDrop = false;
 
             // A separate layout row is the only native drag target. It shares
             // no pixels or mouse handlers with the windowed browser control.
             var handle = new Border {
-                Height = GripHeight, Background = new SolidColorBrush(Color.FromRgb(54, 64, 78)),
+                Height = GripHeight, Background = Brushes.Transparent,
                 Cursor = Cursors.SizeAll, ToolTip = "拖动窗口",
                 Child = new Border { Width = 32, Height = 3, CornerRadius = new CornerRadius(2),
                     Background = Brushes.LightSlateGray, VerticalAlignment = VerticalAlignment.Center }
@@ -73,6 +79,7 @@ namespace DeskCal
             layout.Children.Add(web);
             Content = layout;
 
+            SourceInitialized += (_, __) => appearance = new WindowAppearance(this);
             Loaded += Start;
             Closed += (_, __) =>
             {
@@ -124,7 +131,7 @@ namespace DeskCal
                         string status = parts.Length == 2
                             ? $"网页已就绪。自上次加载起，按下 {parts[0]} 次，点击 {parts[1]} 次。"
                             : "网页的输入诊断尚未就绪。";
-                        MessageBox.Show(status, "DeskCal 1.0.2 · 输入诊断");
+                        MessageBox.Show(status + (appearance.AcrylicActive ? "\n已启用系统 Acrylic。" : "\n使用兼容底色。"), "DeskCal 1.0.3 · 输入诊断");
                     }
                     catch (Exception e) { if (!closing) MessageBox.Show(e.Message, Title); }
                 });
@@ -133,7 +140,7 @@ namespace DeskCal
                 menu.Items.Add("退出", null, (_, __) => Close());
                 tray = new Forms.NotifyIcon {
                     Icon = System.Drawing.Icon.ExtractAssociatedIcon(Forms.Application.ExecutablePath),
-                    Text = "DeskCal 1.0.2", ContextMenuStrip = menu, Visible = true
+                    Text = "DeskCal 1.0.3", ContextMenuStrip = menu, Visible = true
                 };
                 tray.DoubleClick += (_, __) => Recover();
                 core.Navigate(Page);
@@ -164,13 +171,21 @@ namespace DeskCal
             try { message = e.TryGetWebMessageAsString(); }
             catch (ArgumentException) { return; }
             var p = (message ?? "").Split(' ');
-            if (p.Length != 4 || p[0] != "appearance" || !int.TryParse(p[1], out int width) ||
+            if (p.Length != 5 || p[0] != "appearance" || !int.TryParse(p[1], out int width) ||
                 !int.TryParse(p[2], out int percent) || !int.TryParse(p[3], out int blur)) return;
-            if (width < 380 || width > 860 || percent < 70 || percent > 160 || blur < 0 || blur > 48) return;
+            if (width < 380 || width > 860 || percent < 70 || percent > 160 || blur < 0 || blur > 48 || (p[4] != "light" && p[4] != "dark")) return;
             double zoom = percent / 100.0;
             Width = Math.Min(SystemParameters.WorkArea.Width, width * zoom);
             Height = Math.Min(SystemParameters.WorkArea.Height, 520 * zoom + GripHeight);
             web.ZoomFactor = zoom;
+            appearance.Apply(blur > 0, p[4] == "dark");
+            if (firstAppearance)
+            {
+                var work = SystemParameters.WorkArea;
+                Left = Math.Max(work.Left, work.Right - Width - 32);
+                Top = Math.Max(work.Top, work.Bottom - Height - 32);
+                firstAppearance = false;
+            }
         }
 
         private void SaveDownload(object sender, CoreWebView2DownloadStartingEventArgs e)

@@ -1,0 +1,28 @@
+name: Windows widget input
+on:
+  push:
+    branches: [windows-1.0.3]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-11-arm, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build x64 widget
+        run: dotnet build Windows/DeskCal.csproj -c Release
+      - name: Install test client
+        run: python -m pip install websocket-client==1.8.0
+      - name: Exercise real window input
+        run: python Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: DeskCal-1.0.3-x64-${{ matrix.os }}
+          path: Windows/bin/Release/net48/

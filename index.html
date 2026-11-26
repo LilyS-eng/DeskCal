@@ -363,7 +363,7 @@
   .windows-widget #view{ overflow:auto; min-height:0; }
   .windows-widget .w-head{ flex:none; }
   .windows-widget .grid-row,.windows-widget .week{ grid-template-columns:repeat(7,minmax(0,1fr)); }
-  .windows-widget { background:#465262 !important; }
+  body.widget-mode.windows-widget{ background:transparent; }
   .sheet-mask,.panel{ visibility:hidden; }
   .sheet-mask.open,.panel.open{ visibility:visible; }
   #mask.open{ z-index:32; }
@@ -649,8 +649,10 @@ if(new URLSearchParams(location.search).has('widget')) document.body.classList.a
 if(windowsHost){
   document.body.classList.add('windows-widget');
   const blur = document.getElementById('r-blur');
-  blur.disabled = true;
-  blur.parentElement.title = '普通窗口测试版暂不启用桌面毛玻璃';
+  // DWM chooses the blur radius; keep the saved numeric value compatible with other hosts.
+  blur.type = 'checkbox';
+  blur.setAttribute('aria-label','系统毛玻璃');
+  blur.parentElement.title = '由 Windows 管理 Acrylic 毛玻璃强度';
   // Observation only. These listeners never consume events or intercept focus.
   let downs=0, clicks=0;
   for(const type of ['pointerdown','click']){
@@ -715,7 +717,7 @@ function applySettings(){
   widget.style.setProperty('--blur', st.blur+'px');
   widget.classList.toggle('dark-text', st.darkText);
   if(windowsHost){
-    const msg = 'appearance '+st.w+' '+st.scale+' '+st.blur;
+    const msg = 'appearance '+st.w+' '+st.scale+' '+st.blur+' '+(st.darkText?'dark':'light');
     if(msg !== lastAppearance){ lastAppearance = msg; windowsHost.postMessage(msg); }
   }
 }
@@ -1034,7 +1036,11 @@ function renderSettings(){
   $('r-size').value = st.w;     $('v-size').textContent = st.w;
   $('r-scale').value = st.scale; $('v-scale').textContent = st.scale+'%';
   $('r-alpha').value = st.alpha; $('v-alpha').textContent = st.alpha+'%';
-  $('r-blur').value = st.blur;   $('v-blur').textContent = st.blur+'px';
+  if(windowsHost){
+    $('r-blur').checked = st.blur > 0; $('v-blur').textContent = st.blur > 0 ? '系统' : '关';
+  } else {
+    $('r-blur').value = st.blur; $('v-blur').textContent = st.blur+'px';
+  }
   $('t-light').style.opacity = st.darkText ? .5 : 1;
   $('t-dark').style.opacity = st.darkText ? 1 : .5;
   $('s-hide').checked = st.hideDone;
@@ -1044,7 +1050,11 @@ function renderSettings(){
 $('r-size').oninput = e=>{ S.settings.w=+e.target.value; $('v-size').textContent=S.settings.w; saveSet(); applySettings(); render(); };
 $('r-scale').oninput = e=>{ S.settings.scale=+e.target.value; $('v-scale').textContent=S.settings.scale+'%'; saveSet(); applySettings(); render(); };
 $('r-alpha').oninput = e=>{ S.settings.alpha=+e.target.value; $('v-alpha').textContent=S.settings.alpha+'%'; saveSet(); applySettings(); };
-$('r-blur').oninput = e=>{ S.settings.blur=+e.target.value; $('v-blur').textContent=S.settings.blur+'px'; saveSet(); applySettings(); };
+$('r-blur').oninput = e=>{
+  S.settings.blur = windowsHost ? (e.target.checked ? 28 : 0) : +e.target.value;
+  $('v-blur').textContent = windowsHost ? (e.target.checked ? '系统' : '关') : S.settings.blur+'px';
+  saveSet(); applySettings();
+};
 $('t-light').onclick = ()=>{ S.settings.darkText=false; saveSet(); applySettings(); renderSettings(); };
 $('t-dark').onclick = ()=>{ S.settings.darkText=true; saveSet(); applySettings(); renderSettings(); };
 $('s-hide').onchange = e=>{ S.settings.hideDone=e.target.checked; saveSet(); render(); };
@@ -1260,7 +1270,7 @@ if(syncEnabled){
 (function(){
   const v = new URLSearchParams(location.search).get('v') || '?';
   const el = document.getElementById('build-tag');
-  if(el) el.textContent = windowsHost ? 'DeskCal 1.0.2 · 普通窗口' : 'v' + v;
+  if(el) el.textContent = windowsHost ? 'DeskCal 1.0.3' : 'v' + v;
   try{ console.log('[deskcal] build v' + v + ' loaded @ ' + new Date().toISOString()); }catch(e){}
 })();
 </script>

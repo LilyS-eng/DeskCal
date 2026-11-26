@@ -1,6 +1,6 @@
 # DeskCal
 
-适用于 Windows 11 和 macOS 的日历与待办小组件。Windows 1.0.2 使用普通无边框窗口验证鼠标输入；macOS 版显示在桌面层。
+适用于 Windows 11 和 macOS 的日历与待办小组件。Windows 1.0.3 使用独立无边框挂件，macOS 版显示在桌面层。
 
 macOS 外壳用 Swift 的 `NSPanel` + `WKWebView`，Windows 外壳用 WPF + WebView2，两者共用单文件 `index.html`。所以视觉和交互全在一个网页里，想改什么改什么。
 
@@ -10,15 +10,17 @@ macOS 外壳用 Swift 的 `NSPanel` + `WKWebView`，Windows 外壳用 WPF + WebV
 
 ## Windows 11 移植版
 
-1.0.2 是普通窗口输入测试版。标准 WPF WebView2 子窗口独占日历区域，支持任务栏、Alt+Tab 及正常激活。顶部细条单独用于移动窗口。此版暂停桌面置底、透明窗口与桌面毛玻璃。
+Windows 1.0.3 沿用已通过真机输入测试的 1.0.2 标准 WPF WebView2 子窗口。Windows 11 支持时，DWM 在窗口背后绘制 Desktop Acrylic，网页以原卡片透明度绘制。系统管理模糊强度，设置中可以开关毛玻璃。关闭时或系统 API 不支持时使用兼容底色。窗口在系统关闭透明效果或某些远程会话中可能呈现纯色。
+
+挂件首次打开在主屏工作区右下角，拖顶部短横条移动。它使用正常可激活的顶层工具窗口，隐藏任务栏与 Alt+Tab 入口，保留通知区域的日历图标。其他应用获得焦点后可覆盖它；点击挂件时它仍能正常获得焦点。没有 WorkerW / Progman 嵌入、鼠标穿透、强制置底或始终置顶。
 
 ### 打开程序
 
-先从托盘退出旧版，将 x64 压缩包完整解压到新文件夹，再双击 `DeskCal.exe`。右下角显示「DeskCal 1.0.2 · 普通窗口」。运行需要 .NET Framework 4.8 或更高版本和 [Microsoft Edge WebView2 Evergreen 运行时](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)。
+先从托盘退出旧版，将 x64 压缩包完整解压到新文件夹，再双击 `DeskCal.exe`。右下角显示「DeskCal 1.0.3」。托盘菜单可显示窗口、刷新、查看输入诊断或退出。运行需要 .NET Framework 4.8 或更高版本和 [Microsoft Edge WebView2 Evergreen 运行时](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)。
 
 ### 空白日历与旧版迁移
 
-首次启动时待办为零。1.0.2 使用同一 WebView2 配置目录下独立的个人清单，并沿用旧版分类与外观偏好。若先前保存过待办，在「设置 → 从旧版选择待办」勾选想保留的记录，点「迁移所选」。默认全部不选，可原样保留旧版副本；迁移会保留日期、时间、分类和完成状态，不会在下次启动时重新添加已迁移的条目。当前日历的 JSON 导出只包含当前清单。
+新用户首次启动时待办为零，1.0.2 用户原有待办与设置直接沿用。更早版本中的记录仅在「设置 → 从旧版选择待办」勾选并迁移后才加入个人清单。数据位于 `%LOCALAPPDATA%\DeskCal\WebView2`，升级无需删除此目录。
 
 ### 自行构建
 
@@ -35,10 +37,9 @@ dotnet build Windows/DeskCal.csproj -c Release
 
 - 左右箭头翻页，点月视图的日期进入当天；用日、周、月按钮切换视图。
 - 点「＋」创建待办，点圆圈勾选或恢复。在日视图或「☰ 全部待办」里点「编辑」，可改内容、日期、时间和分类。
-- 点击设置可调整宽度与缩放。用窗口顶部细条移动窗口，从任务栏或 Alt+Tab 返回。可用 Alt+F4 或托盘菜单退出。
-- 若真机点击仍无反应，连点日历和按钮几次，然后右键托盘日历图标选「查看输入诊断」。它显示本次网页加载后收到的按下与点击次数，刷新后计数归零。
-- 真机确认本版能点击后，再逐项验证隐藏任务栏、视觉透明、窗口置底；每次只改一项并复测同一组按钮，同时用其他窗口遮住一部分日历。1.0.2 本身固定为普通窗口。
-- 数据保存在 `%LOCALAPPDATA%\DeskCal\WebView2`。升级和迁移都无需删除此目录。在 Mac 与 Windows 间转移清单可用设置里的 JSON 导入导出。
+- 点击设置可调整宽度、缩放、卡片透明度，或开关系统毛玻璃。使用窗口顶部短横条移动，从系统托盘找回窗口。
+- 若遇到输入问题，点几次日期和按钮，再从托盘选择「查看输入诊断」。计数表示本次加载后网页收到的按下与点击次数。
+- Windows 原生输入回归脚本位于 `Windows/tests/input_smoke.py`。在已解锁的专用 Windows 测试桌面，退出其他 DeskCal 实例，安装 Python 3.10+ 和 `websocket-client` 后，执行 `python Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe`。脚本以临时 WebView2 配置运行，通过 Windows 鼠标和键盘操作实际控件，覆盖焦点切换、滚动和重启持久化。调试连接仅由测试进程启用。
 
 ## 特性
 
