@@ -34,21 +34,24 @@ namespace DeskCal
     internal sealed class Widget : Window
     {
         private const string Host = "deskcal.invalid";
-        private const string Page = "https://" + Host + "/index.html?widget=1&host=windows&build=1.0.4";
+        private const string Page = "https://" + Host + "/index.html?widget=1&host=windows&build=1.0.5";
         private readonly string dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DeskCal");
         private readonly WebView2 web = new WebView2();
         private readonly Forms.ContextMenuStrip menu = new Forms.ContextMenuStrip();
         private Forms.NotifyIcon tray;
         private bool closing;
         private bool frameRefreshQueued;
+        private DispatcherOperation frameRefresh;
         private ReminderScheduler reminders;
         private bool firstAppearance = true;
         private WindowAppearance appearance;
-        private const int GripHeight = 12;
+        private const int GripHeight = 30;
+        private const int CloseWidth = 34;
+        private const int CloseHeight = 26;
 
         public Widget()
         {
-            Title = "DeskCal 1.0.4";
+            Title = "DeskCal 1.0.5";
             Width = 620;
             Height = 520 + GripHeight;
             WindowStyle = WindowStyle.None;
@@ -74,12 +77,14 @@ namespace DeskCal
                     Background = Brushes.LightSlateGray, VerticalAlignment = VerticalAlignment.Center }
             };
             var close = new Button {
-                Content = "×", Width = 25, Height = GripHeight, FontSize = 11,
+                Content = "×", Width = CloseWidth, Height = CloseHeight, FontSize = 20,
+                Margin = new Thickness(0, 0, 4, 0),
                 Padding = new Thickness(0), BorderThickness = new Thickness(0),
-                Foreground = Brushes.LightSlateGray, Background = Brushes.Transparent,
-                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                Foreground = Brushes.WhiteSmoke, Background = Brushes.Transparent,
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center,
                 ToolTip = "隐藏到托盘"
             };
+            close.Template = CloseButtonTemplate();
             System.Windows.Automation.AutomationProperties.SetName(close, "隐藏到托盘");
             close.Click += (_, __) => Close();
             var header = new Grid { Height = GripHeight };
@@ -96,7 +101,14 @@ namespace DeskCal
 
             SourceInitialized += (_, __) => appearance = new WindowAppearance(this);
             Loaded += Start;
-            ContentRendered += (_, __) => QueueFrameRefresh();
+            IsVisibleChanged += (_, __) => {
+                if (IsVisible) QueueFrameRefresh();
+                else CancelFrameRefresh();
+            };
+            StateChanged += (_, __) => {
+                if (WindowState != WindowState.Minimized) QueueFrameRefresh();
+                else CancelFrameRefresh();
+            };
             Closing += (_, e) => {
                 if (closing || tray == null) return;
                 e.Cancel = true;
@@ -106,12 +118,31 @@ namespace DeskCal
             Closed += (_, __) =>
             {
                 closing = true;
+                CancelFrameRefresh();
                 Application.Current.SessionEnding -= EndSession;
                 reminders?.Dispose();
                 tray?.Dispose();
                 menu.Dispose();
                 web.Dispose();
             };
+        }
+
+        private static ControlTemplate CloseButtonTemplate()
+        {
+            var border = new FrameworkElementFactory(typeof(Border));
+            border.Name = "CloseSurface";
+            border.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+            border.SetValue(Border.CornerRadiusProperty, new CornerRadius(5));
+            var content = new FrameworkElementFactory(typeof(ContentPresenter));
+            content.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            content.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+            border.AppendChild(content);
+            var template = new ControlTemplate(typeof(Button)) { VisualTree = border };
+            var hover = new Trigger { Property = IsMouseOverProperty, Value = true };
+            hover.Setters.Add(new Setter(Border.BackgroundProperty,
+                new SolidColorBrush(Color.FromArgb(48, 255, 255, 255)), border.Name));
+            template.Triggers.Add(hover);
+            return template;
         }
 
         private async void Start(object sender, RoutedEventArgs args)
@@ -160,7 +191,7 @@ namespace DeskCal
                         string status = parts.Length == 2
                             ? $"网页已就绪。自上次加载起，按下 {parts[0]} 次，点击 {parts[1]} 次。"
                             : "网页的输入诊断尚未就绪。";
-                        MessageBox.Show(status + (appearance.AcrylicActive ? "\n已启用系统 Acrylic。" : "\n使用兼容底色。"), "DeskCal 1.0.4 · 输入诊断");
+                        MessageBox.Show(status + (appearance.AcrylicActive ? "\n已启用系统 Acrylic。" : "\n使用兼容底色。"), "DeskCal 1.0.5 · 输入诊断");
                     }
                     catch (Exception e) { if (!closing) MessageBox.Show(e.Message, Title); }
                 });
@@ -177,7 +208,7 @@ namespace DeskCal
                 };
                 tray = new Forms.NotifyIcon {
                     Icon = System.Drawing.Icon.ExtractAssociatedIcon(Forms.Application.ExecutablePath),
-                    Text = "DeskCal 1.0.4", ContextMenuStrip = menu, Visible = true
+                    Text = "DeskCal 1.0.5", ContextMenuStrip = menu, Visible = true
                 };
                 tray.MouseClick += (_, e) => {
                     if (e.Button == Forms.MouseButtons.Left) ToggleVisibility();
@@ -215,12 +246,29 @@ namespace DeskCal
 
         private void QueueFrameRefresh()
         {
-            if (frameRefreshQueued || closing || !IsVisible) return;
+            if (frameRefreshQueued || closing || !IsVisible || WindowState == WindowState.Minimized) return;
             frameRefreshQueued = true;
-            // Wait for this layout and the child HWND's first frame to settle.
-            Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() => {
+            // A dispatcher callback alone can precede WPF's first visible render.
+            CompositionTarget.Rendering += RefreshAfterRender;
+            InvalidateVisual();
+        }
+
+        private void CancelFrameRefresh()
+        {
+            CompositionTarget.Rendering -= RefreshAfterRender;
+            frameRefresh?.Abort();
+            frameRefresh = null;
+            frameRefreshQueued = false;
+        }
+
+        private void RefreshAfterRender(object sender, EventArgs args)
+        {
+            CompositionTarget.Rendering -= RefreshAfterRender;
+            frameRefresh = Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() => {
+                frameRefresh = null;
                 frameRefreshQueued = false;
-                if (IsVisible && !closing) appearance.Refresh();
+                if (IsVisible && !closing && WindowState != WindowState.Minimized)
+                    appearance.Refresh();
             }));
         }
 
@@ -230,7 +278,6 @@ namespace DeskCal
             Show();
             Activate();
             web.Focus();
-            QueueFrameRefresh();
         }
 
         private void Receive(object sender, CoreWebView2WebMessageReceivedEventArgs e)

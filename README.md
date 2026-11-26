@@ -1,6 +1,6 @@
 # DeskCal
 
-适用于 Windows 11 和 macOS 的日历与待办小组件。Windows 1.0.4 使用独立无边框挂件，macOS 版显示在桌面层。
+适用于 Windows 11 和 macOS 的日历与待办小组件。Windows 1.0.5 使用独立无边框挂件，macOS 版显示在桌面层。
 
 macOS 外壳用 Swift 的 `NSPanel` + `WKWebView`，Windows 外壳用 WPF + WebView2，两者共用单文件 `index.html`。所以视觉和交互全在一个网页里，想改什么改什么。
 
@@ -10,13 +10,13 @@ macOS 外壳用 Swift 的 `NSPanel` + `WKWebView`，Windows 外壳用 WPF + WebV
 
 ## Windows 11 移植版
 
-Windows 1.0.4 在 1.0.3 的标准 WPF WebView2 窗口上开发。首次内容加载、初始尺寸应用及从托盘恢复后，窗口会重新应用 DWM 背景并请求系统重绘边框。Windows 11 支持时，DWM 在窗口背后绘制 Desktop Acrylic，网页以原卡片透明度绘制。系统管理模糊强度，设置中可以开关毛玻璃。关闭时或系统 API 不支持时使用兼容底色。窗口在系统关闭透明效果或某些远程会话中可能呈现纯色。
+Windows 1.0.5 沿用标准 WPF WebView2 窗口。首次显示、WebView2 完成加载及从托盘恢复后，等待窗口绘制，再重建 DWM 背景并同步重绘边框与子窗口。刷新保留窗口坐标和大小。Windows 11 支持时，DWM 在窗口背后绘制 Desktop Acrylic，网页以原卡片透明度绘制。系统管理模糊强度，设置中可以开关毛玻璃。关闭时或系统 API 不支持时使用兼容底色。窗口在系统关闭透明效果或某些远程会话中可能呈现纯色。
 
 挂件首次打开在主屏工作区右下角，拖顶部短横条移动。它使用正常可激活的顶层工具窗口，隐藏任务栏与 Alt+Tab 入口，保留通知区域的日历图标。其他应用获得焦点后可覆盖它；点击挂件时它仍能正常获得焦点。没有 WorkerW / Progman 嵌入、鼠标穿透、强制置底或始终置顶。
 
 ### 打开程序
 
-先从托盘退出旧版，将 x64 压缩包完整解压到新文件夹，再双击 `DeskCal.exe`。右下角显示「DeskCal 1.0.4」。点顶部 × 隐藏，左键单击托盘图标显示或隐藏。右键托盘可显示、隐藏、刷新、查看输入诊断，或选择「退出 DeskCal」结束进程。运行需要 .NET Framework 4.8 或更高版本和 [Microsoft Edge WebView2 Evergreen 运行时](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)。
+先从托盘退出旧版，将 x64 压缩包完整解压到新文件夹，再双击 `DeskCal.exe`。右下角显示「DeskCal 1.0.5」。点顶部右侧 × 隐藏，左键单击托盘图标显示或隐藏。右键托盘可显示、隐藏、刷新、查看输入诊断，或选择「退出 DeskCal」结束进程。运行需要 .NET Framework 4.8 或更高版本和 [Microsoft Edge WebView2 Evergreen 运行时](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)。
 
 ### 待办提醒
 

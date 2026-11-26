@@ -10,6 +10,9 @@ namespace DeskCal
     internal sealed class WindowAppearance
     {
         private const int ExtendedStyle = -20, ToolWindow = 0x80;
+        private const uint RefreshFrame = 0x37; // FRAMECHANGED | NOACTIVATE | NOZORDER | NOMOVE | NOSIZE
+        private const uint PaintFrameAndChildrenNow = 0x581; // INVALIDATE | ALLCHILDREN | UPDATENOW | FRAME
+        private const int DesktopAcrylic = 3, NoBackdrop = 1;
         private const int DarkMode = 20, CornerPreference = 33, SystemBackdrop = 38;
         private readonly Window window;
         private readonly HwndSource source;
@@ -24,6 +27,8 @@ namespace DeskCal
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
         [DllImport("dwmapi.dll")]
         private static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref Margins margins);
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmFlush();
         [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
         private static extern int GetWindowLong(IntPtr hwnd, int index);
         [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
@@ -50,11 +55,19 @@ namespace DeskCal
 
         public void Refresh()
         {
-            Apply(glass.GetValueOrDefault(true), darkInk.GetValueOrDefault(), force: true);
-            // SWP_FRAMECHANGED | NOACTIVATE | NOZORDER | NOMOVE | NOSIZE
-            SetWindowPos(source.Handle, IntPtr.Zero, 0, 0, 0, 0, 0x37);
-            // RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN
-            RedrawWindow(source.Handle, IntPtr.Zero, IntPtr.Zero, 0x481);
+            if (!glass.GetValueOrDefault(true)) return;
+            // Let DWM consume the newly visible surface first. Rebuild a backdrop
+            // that may still report Acrylic while drawing the previous surface.
+            DwmFlush();
+            var hwnd = source.Handle;
+            var noMargins = new Margins();
+            int noBackdrop = NoBackdrop;
+            DwmSetWindowAttribute(hwnd, SystemBackdrop, ref noBackdrop, sizeof(int));
+            DwmExtendFrameIntoClientArea(hwnd, ref noMargins);
+            Apply(true, darkInk.GetValueOrDefault(), force: true);
+
+            SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, RefreshFrame);
+            RedrawWindow(hwnd, IntPtr.Zero, IntPtr.Zero, PaintFrameAndChildrenNow);
         }
 
         public void Apply(bool enableGlass, bool useDarkText, bool force = false)
@@ -64,7 +77,7 @@ namespace DeskCal
             darkInk = useDarkText;
             int dark = useDarkText ? 0 : 1;
             DwmSetWindowAttribute(source.Handle, DarkMode, ref dark, sizeof(int));
-            int material = enableGlass ? 3 : 1; // DWMSBT_TRANSIENTWINDOW / DWMSBT_NONE
+            int material = enableGlass ? DesktopAcrylic : NoBackdrop;
             var margins = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
             AcrylicActive = DwmSetWindowAttribute(source.Handle, SystemBackdrop, ref material, sizeof(int)) == 0
                 && enableGlass && DwmExtendFrameIntoClientArea(source.Handle, ref margins) == 0;
@@ -76,8 +89,10 @@ namespace DeskCal
 
             var color = AcrylicActive ? Colors.Transparent :
                 (useDarkText ? Color.FromRgb(200, 210, 217) : Color.FromRgb(56, 69, 86));
-            source.CompositionTarget.BackgroundColor = color;
-            window.Background = new SolidColorBrush(color);
+            if (source.CompositionTarget.BackgroundColor != color)
+                source.CompositionTarget.BackgroundColor = color;
+            if (!(window.Background is SolidColorBrush brush) || brush.Color != color)
+                window.Background = new SolidColorBrush(color);
         }
     }
 }

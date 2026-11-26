@@ -1279,7 +1279,7 @@ if(syncEnabled){
 (function(){
   const v = new URLSearchParams(location.search).get('v') || '?';
   const el = document.getElementById('build-tag');
-  if(el) el.textContent = windowsHost ? 'DeskCal 1.0.4' : 'v' + v;
+  if(el) el.textContent = windowsHost ? 'DeskCal 1.0.5' : 'v' + v;
   try{ console.log('[deskcal] build v' + v + ' loaded @ ' + new Date().toISOString()); }catch(e){}
 })();
 </script>

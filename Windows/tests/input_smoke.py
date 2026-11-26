@@ -32,6 +32,7 @@ find = api("FindWindowW", hwnd_t, W.LPCWSTR, W.LPCWSTR)
 at = api("WindowFromPoint", hwnd_t, W.POINT)
 root = api("GetAncestor", hwnd_t, hwnd_t, W.UINT)
 origin = api("ClientToScreen", W.BOOL, hwnd_t, C.POINTER(W.POINT))
+window_rect = api("GetWindowRect", W.BOOL, hwnd_t, C.POINTER(W.RECT))
 rect = api("GetClientRect", W.BOOL, hwnd_t, C.POINTER(W.RECT))
 style = api("GetWindowLongW", W.LONG, hwnd_t, C.c_int)
 foreground = api("SetForegroundWindow", W.BOOL, hwnd_t)
@@ -96,7 +97,7 @@ class Widget:
         Thread(target=read_output, daemon=True).start()
         self.hwnd = None
         try:
-            self.hwnd = wait(lambda: find(None, "DeskCal 1.0.4"), "window", 120)
+            self.hwnd = wait(lambda: find(None, "DeskCal 1.0.5"), "window", 120)
             wait(lambda: self.js("document.querySelectorAll('.cell').length===42"),
                  "WebView2 renders the initial calendar", 90)
             foreground(self.hwnd)
@@ -193,6 +194,33 @@ def type_letters(word):
         key(vk, 0, 2, 0)
 
 
+def assert_acrylic(hwnd):
+    material = C.c_int()
+    assert get_material(hwnd, 38, C.byref(material), C.sizeof(material)) == 0
+    assert material.value == 3, f"Expected Desktop Acrylic, got {material.value}"
+
+
+def window_geometry(hwnd):
+    bounds = W.RECT()
+    assert window_rect(hwnd, C.byref(bounds))
+    return bounds.left, bounds.top, bounds.right, bounds.bottom
+
+
+def screen_pixel(x, y):
+    get_dc = api("GetDC", W.HDC, hwnd_t)
+    release_dc = api("ReleaseDC", C.c_int, hwnd_t, W.HDC)
+    pixel = C.windll.gdi32.GetPixel
+    pixel.argtypes, pixel.restype = (W.HDC, C.c_int, C.c_int), W.DWORD
+    dc = get_dc(None)
+    assert dc
+    try:
+        color = pixel(dc, x, y)
+        assert color != 0xffffffff
+        return color
+    finally:
+        release_dc(None, dc)
+
+
 def run(exe, profile):
     current = "JSON.parse(localStorage.getItem('deskcal-personal-v1')||'{\"todos\":[]}').todos"
     app = Widget(exe, profile)
@@ -200,25 +228,40 @@ def run(exe, profile):
         assert app.js(current + ".length") == 0
         ex = style(app.hwnd, -20)
         assert ex & 0x80 and not ex & (0x40000 | 0x20 | 0x08000000 | 0x80000 | 0x8), hex(ex)
-        material = C.c_int()
-        assert get_material(app.hwnd, 38, C.byref(material), C.sizeof(material)) == 0
-        assert material.value == 3, f"Expected Desktop Acrylic, got {material.value}"
-        print("Initial profile empty; Acrylic, tool-window and normal input styles verified.", flush=True)
+        assert_acrylic(app.hwnd)
+        print("Initial profile empty; Acrylic attribute enabled before resize, tool-window and input styles verified.", flush=True)
         if os.environ.get("GITHUB_ACTIONS") == "true":
             capture(app.hwnd)
+        original = window_geometry(app.hwnd)
         corner, bounds = W.POINT(), W.RECT()
         assert origin(app.hwnd, C.byref(corner)) and rect(app.hwnd, C.byref(bounds))
-        assert move(corner.x + bounds.right - 10, corner.y + 6)
-        mouse(2, 0, 0, 0, 0)
-        mouse(4, 0, 0, 0, 0)
-        wait(lambda: not visible(app.hwnd), "window close button hides DeskCal")
-        assert app.proc.poll() is None
-        for expected in [True, False, True]:
+        dpi = app.js("devicePixelRatio")
+        # Click in the widened region below and to the left of the old button.
+        close_x = corner.x + bounds.right - round(32 * dpi)
+        close_y = corner.y + round(21 * dpi)
+        assert move(close_x - round(70 * dpi), close_y)
+        time.sleep(.2)
+        idle_color = screen_pixel(close_x, close_y)
+        assert move(close_x, close_y)
+        wait(lambda: screen_pixel(close_x, close_y) != idle_color, "visible close button hover")
+        for _ in range(5):
+            assert move(close_x, close_y)
+            mouse(2, 0, 0, 0, 0)
+            mouse(4, 0, 0, 0, 0)
+            wait(lambda: not visible(app.hwnd), "window close button hides DeskCal")
+            assert app.proc.poll() is None
             app.js("tray:left")
-            wait(lambda: bool(visible(app.hwnd)) == expected, "tray toggles window")
-        restored = W.POINT()
-        assert origin(app.hwnd, C.byref(restored)) and (corner.x, corner.y) == (restored.x, restored.y)
-        print("PASS: close button hides, tray toggles, window position restored.", flush=True)
+            wait(lambda: visible(app.hwnd), "tray restores window")
+            time.sleep(.3)
+            assert window_geometry(app.hwnd) == original
+            assert_acrylic(app.hwnd)
+        app.js("tray:left")
+        wait(lambda: not visible(app.hwnd), "tray click also hides")
+        app.js("tray:left")
+        wait(lambda: visible(app.hwnd), "tray click restores again")
+        assert window_geometry(app.hwnd) == original
+        assert_acrylic(app.hwnd)
+        print("PASS: close hover and larger mouse target; six tray restores kept Acrylic enabled and the same bounds.", flush=True)
         month = app.js("document.querySelector('#title-main').textContent")
         app.click("#next")
         assert app.js("document.querySelector('#title-main').textContent") != month
@@ -338,7 +381,7 @@ def test_reminders(exe, profile):
 
 
 if __name__ == "__main__":
-    if find(None, "DeskCal 1.0.4"):
+    if find(None, "DeskCal 1.0.5"):
         sys.exit("Exit the running copy before running this desktop test.")
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as workspace:
         source = Path(sys.argv[1]).resolve()
