@@ -34,14 +34,18 @@ namespace DeskCal
     internal sealed class Widget : Window
     {
         private const string Host = "deskcal.invalid";
-        private const string Page = "https://" + Host + "/index.html?widget=1&host=windows&build=1.0.5";
+        private const string Page = "https://" + Host + "/index.html?widget=1&host=windows&build=1.0.6";
         private readonly string dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DeskCal");
         private readonly WebView2 web = new WebView2();
         private readonly Forms.ContextMenuStrip menu = new Forms.ContextMenuStrip();
         private Forms.NotifyIcon tray;
         private bool closing;
-        private bool frameRefreshQueued;
-        private DispatcherOperation frameRefresh;
+        private DispatcherOperation pendingReveal;
+        private bool awaitingFrame;
+        private bool needsReveal = true;
+        private bool focusOnReveal;
+        private bool pageReady;
+        private readonly WidgetPlacement placement;
         private ReminderScheduler reminders;
         private bool firstAppearance = true;
         private WindowAppearance appearance;
@@ -51,7 +55,7 @@ namespace DeskCal
 
         public Widget()
         {
-            Title = "DeskCal 1.0.5";
+            Title = "DeskCal 1.0.6";
             Width = 620;
             Height = 520 + GripHeight;
             WindowStyle = WindowStyle.None;
@@ -91,7 +95,10 @@ namespace DeskCal
             header.Children.Add(handle);
             header.Children.Add(close);
             handle.MouseLeftButtonDown += (_, e) => {
-                if (e.ButtonState == MouseButtonState.Pressed) DragMove();
+                if (e.ButtonState == MouseButtonState.Pressed) {
+                    DragMove();
+                    if (placement.AfterDrag()) HideToEdge();
+                }
             };
             var layout = new DockPanel();
             DockPanel.SetDock(header, Dock.Top);
@@ -100,25 +107,19 @@ namespace DeskCal
             Content = layout;
 
             SourceInitialized += (_, __) => appearance = new WindowAppearance(this);
+            placement = new WidgetPlacement(this, header, CloseButtonTemplate(), HideToEdge, Recover);
             Loaded += Start;
-            IsVisibleChanged += (_, __) => {
-                if (IsVisible) QueueFrameRefresh();
-                else CancelFrameRefresh();
-            };
-            StateChanged += (_, __) => {
-                if (WindowState != WindowState.Minimized) QueueFrameRefresh();
-                else CancelFrameRefresh();
-            };
             Closing += (_, e) => {
                 if (closing || tray == null) return;
                 e.Cancel = true;
-                Hide();
+                HideToTray();
             };
             Application.Current.SessionEnding += EndSession;
             Closed += (_, __) =>
             {
                 closing = true;
-                CancelFrameRefresh();
+                CancelReveal();
+                placement.Dispose();
                 Application.Current.SessionEnding -= EndSession;
                 reminders?.Dispose();
                 tray?.Dispose();
@@ -176,11 +177,17 @@ namespace DeskCal
                 core.NavigationCompleted += (_, e) => {
                     if (e.IsSuccess)
                     {
-                        QueueFrameRefresh();
+                        pageReady = true;
+                        QueueReveal();
                         if (IsActive) web.Focus();
                     }
                     if (!e.IsSuccess && e.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
+                    {
+                        pageReady = true;
+                        firstAppearance = false;
+                        QueueReveal();
                         MessageBox.Show("日历载入失败。请从系统托盘刷新组件。", Title);
+                    }
                 };
                 menu.Items.Add("刷新组件", null, (_, __) => core.Reload());
                 menu.Items.Add("查看输入诊断", null, async (_, __) => {
@@ -191,24 +198,24 @@ namespace DeskCal
                         string status = parts.Length == 2
                             ? $"网页已就绪。自上次加载起，按下 {parts[0]} 次，点击 {parts[1]} 次。"
                             : "网页的输入诊断尚未就绪。";
-                        MessageBox.Show(status + (appearance.AcrylicActive ? "\n已启用系统 Acrylic。" : "\n使用兼容底色。"), "DeskCal 1.0.5 · 输入诊断");
+                        MessageBox.Show(status + (appearance.AcrylicActive ? "\n已启用系统 Acrylic。" : "\n使用兼容底色。"), "DeskCal 1.0.6 · 输入诊断");
                     }
                     catch (Exception e) { if (!closing) MessageBox.Show(e.Message, Title); }
                 });
                 var show = new Forms.ToolStripMenuItem("显示 DeskCal", null, (_, __) => Recover());
-                var hide = new Forms.ToolStripMenuItem("隐藏 DeskCal", null, (_, __) => Hide());
+                var hide = new Forms.ToolStripMenuItem("隐藏 DeskCal", null, (_, __) => HideToTray());
                 menu.Items.Insert(0, show);
                 menu.Items.Insert(1, hide);
                 menu.Items.Insert(2, new Forms.ToolStripSeparator());
                 menu.Items.Add(new Forms.ToolStripSeparator());
                 menu.Items.Add("退出 DeskCal", null, (_, __) => Exit());
                 menu.Opening += (_, __) => {
-                    show.Enabled = !IsVisible;
-                    hide.Enabled = IsVisible;
+                    show.Enabled = !placement.MainShown;
+                    hide.Enabled = !placement.TrayHidden;
                 };
                 tray = new Forms.NotifyIcon {
                     Icon = System.Drawing.Icon.ExtractAssociatedIcon(Forms.Application.ExecutablePath),
-                    Text = "DeskCal 1.0.5", ContextMenuStrip = menu, Visible = true
+                    Text = "DeskCal 1.0.6", ContextMenuStrip = menu, Visible = true
                 };
                 tray.MouseClick += (_, e) => {
                     if (e.Button == Forms.MouseButtons.Left) ToggleVisibility();
@@ -240,42 +247,75 @@ namespace DeskCal
 
         private void ToggleVisibility()
         {
-            if (IsVisible) Hide();
+            if (placement.MainShown) HideToTray();
             else Recover();
         }
 
-        private void QueueFrameRefresh()
+        private void HideToTray()
         {
-            if (frameRefreshQueued || closing || !IsVisible || WindowState == WindowState.Minimized) return;
-            frameRefreshQueued = true;
-            // A dispatcher callback alone can precede WPF's first visible render.
-            CompositionTarget.Rendering += RefreshAfterRender;
+            placement.HideToTray();
+            ConcealMain();
+        }
+
+        private void HideToEdge()
+        {
+            ConcealMain();
+            placement.HideToEdge();
+        }
+
+        private void ConcealMain()
+        {
+            CancelReveal();
+            needsReveal = true;
+            appearance.Conceal();
+            Hide();
+        }
+
+        private void QueueReveal()
+        {
+            if (!needsReveal || !pageReady || firstAppearance || !IsVisible || awaitingFrame || closing) return;
+            awaitingFrame = true;
+            CompositionTarget.Rendering += RevealAfterFrame;
             InvalidateVisual();
         }
 
-        private void CancelFrameRefresh()
+        private void CancelReveal()
         {
-            CompositionTarget.Rendering -= RefreshAfterRender;
-            frameRefresh?.Abort();
-            frameRefresh = null;
-            frameRefreshQueued = false;
+            CompositionTarget.Rendering -= RevealAfterFrame;
+            pendingReveal?.Abort();
+            pendingReveal = null;
+            awaitingFrame = false;
         }
 
-        private void RefreshAfterRender(object sender, EventArgs args)
+        private void RevealAfterFrame(object sender, EventArgs args)
         {
-            CompositionTarget.Rendering -= RefreshAfterRender;
-            frameRefresh = Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() => {
-                frameRefresh = null;
-                frameRefreshQueued = false;
-                if (IsVisible && !closing && WindowState != WindowState.Minimized)
-                    appearance.Refresh();
+            CompositionTarget.Rendering -= RevealAfterFrame;
+            pendingReveal = Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() => {
+                pendingReveal = null;
+                awaitingFrame = false;
+                if (!IsVisible || closing) return;
+                appearance.Present();
+                needsReveal = false;
+                if (focusOnReveal)
+                {
+                    focusOnReveal = false;
+                    Activate();
+                    web.Focus();
+                }
             }));
         }
 
         private void Recover()
         {
+            placement.PrepareShow();
             WindowState = WindowState.Normal;
-            Show();
+            if (!IsVisible)
+            {
+                focusOnReveal = true;
+                Show();
+                QueueReveal();
+                return;
+            }
             Activate();
             web.Focus();
         }
@@ -293,22 +333,33 @@ namespace DeskCal
                 return;
             }
             var p = (message ?? "").Split(' ');
-            if (p.Length != 5 || p[0] != "appearance" || !int.TryParse(p[1], out int width) ||
-                !int.TryParse(p[2], out int percent) || !int.TryParse(p[3], out int blur)) return;
-            if (width < 380 || width > 860 || percent < 70 || percent > 160 || blur < 0 || blur > 48 || (p[4] != "light" && p[4] != "dark")) return;
+            if (p.Length == 4 && p[0] == "size" && int.TryParse(p[1], out int requestedWidth) &&
+                int.TryParse(p[2], out int requestedHeight) && (p[3] == "preview" || p[3] == "save"))
+            {
+                placement.Resize(requestedWidth, requestedHeight);
+                if (p[3] == "save") SendSize("saved");
+                return;
+            }
+
+            if (p.Length != 6 || p[0] != "appearance" || !int.TryParse(p[1], out int width) ||
+                !int.TryParse(p[2], out int height) || !int.TryParse(p[3], out int percent) ||
+                !int.TryParse(p[4], out int blur) || percent < 70 || percent > 160 ||
+                blur < 0 || blur > 48 || (p[5] != "light" && p[5] != "dark")) return;
             double zoom = percent / 100.0;
-            Width = Math.Min(SystemParameters.WorkArea.Width, width * zoom);
-            Height = Math.Min(SystemParameters.WorkArea.Height, 520 * zoom + GripHeight);
-            web.ZoomFactor = zoom;
-            appearance.Apply(blur > 0, p[4] == "dark");
+            if (web.ZoomFactor != zoom) web.ZoomFactor = zoom;
+            appearance.Apply(blur > 0, p[5] == "dark");
             if (firstAppearance)
             {
-                var work = SystemParameters.WorkArea;
-                Left = Math.Max(work.Left, work.Right - Width - 32);
-                Top = Math.Max(work.Top, work.Bottom - Height - 32);
                 firstAppearance = false;
-                QueueFrameRefresh();
+                placement.Resize(width, height, initial: true);
+                SendSize("current");
+                QueueReveal();
             }
+        }
+
+        private void SendSize(string kind)
+        {
+            web.CoreWebView2.PostWebMessageAsString($"size {kind} {Math.Round(Width):0} {Math.Round(Height):0}");
         }
 
         private void SaveDownload(object sender, CoreWebView2DownloadStartingEventArgs e)

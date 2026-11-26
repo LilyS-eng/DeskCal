@@ -73,6 +73,12 @@ def window_texts(pid):
     return lines
 
 
+def presented(hwnd):
+    cloaked = C.c_int()
+    return bool(hwnd and visible(hwnd) and
+                get_material(hwnd, 14, C.byref(cloaked), C.sizeof(cloaked)) == 0 and cloaked.value == 0)
+
+
 def wait(fn, label, seconds=15):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -97,9 +103,10 @@ class Widget:
         Thread(target=read_output, daemon=True).start()
         self.hwnd = None
         try:
-            self.hwnd = wait(lambda: find(None, "DeskCal 1.0.5"), "window", 120)
+            self.hwnd = wait(lambda: find(None, "DeskCal 1.0.6"), "window", 120)
             wait(lambda: self.js("document.querySelectorAll('.cell').length===42"),
                  "WebView2 renders the initial calendar", 90)
+            wait(lambda: presented(self.hwnd), "first composed window reveal", 30)
             foreground(self.hwnd)
         except BaseException:
             print("Process", self.proc.poll(), "windows", window_texts(self.proc.pid), flush=True)
@@ -251,14 +258,14 @@ def run(exe, profile):
             wait(lambda: not visible(app.hwnd), "window close button hides DeskCal")
             assert app.proc.poll() is None
             app.js("tray:left")
-            wait(lambda: visible(app.hwnd), "tray restores window")
+            wait(lambda: presented(app.hwnd), "tray restores window")
             time.sleep(.3)
             assert window_geometry(app.hwnd) == original
             assert_acrylic(app.hwnd)
         app.js("tray:left")
         wait(lambda: not visible(app.hwnd), "tray click also hides")
         app.js("tray:left")
-        wait(lambda: visible(app.hwnd), "tray click restores again")
+        wait(lambda: presented(app.hwnd), "tray click restores again")
         assert window_geometry(app.hwnd) == original
         assert_acrylic(app.hwnd)
         print("PASS: close hover and larger mouse target; six tray restores kept Acrylic enabled and the same bounds.", flush=True)
@@ -384,7 +391,7 @@ def test_reminders(exe, profile):
 
 
 if __name__ == "__main__":
-    if find(None, "DeskCal 1.0.5"):
+    if find(None, "DeskCal 1.0.6"):
         sys.exit("Exit the running copy before running this desktop test.")
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as workspace:
         source = Path(sys.argv[1]).resolve()

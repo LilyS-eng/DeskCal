@@ -10,10 +10,8 @@ namespace DeskCal
     internal sealed class WindowAppearance
     {
         private const int ExtendedStyle = -20, ToolWindow = 0x80;
-        private const uint RefreshFrame = 0x37; // FRAMECHANGED | NOACTIVATE | NOZORDER | NOMOVE | NOSIZE
-        private const uint PaintFrameAndChildrenNow = 0x581; // INVALIDATE | ALLCHILDREN | UPDATENOW | FRAME
         private const int DesktopAcrylic = 3, NoBackdrop = 1;
-        private const int DarkMode = 20, CornerPreference = 33, SystemBackdrop = 38;
+        private const int Cloak = 13, DarkMode = 20, CornerPreference = 33, SystemBackdrop = 38;
         private readonly Window window;
         private readonly HwndSource source;
         private bool? glass;
@@ -34,13 +32,6 @@ namespace DeskCal
         [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
         private static extern int SetWindowLong(IntPtr hwnd, int index, int value);
 
-        [DllImport("user32.dll")]
-        private static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter,
-            int x, int y, int width, int height, uint flags);
-
-        [DllImport("user32.dll")]
-        private static extern bool RedrawWindow(IntPtr hwnd, IntPtr rect, IntPtr region, uint flags);
-
         public WindowAppearance(Window window)
         {
             this.window = window;
@@ -50,39 +41,45 @@ namespace DeskCal
             SetWindowLong(hwnd, ExtendedStyle, GetWindowLong(hwnd, ExtendedStyle) | ToolWindow);
             int rounded = 2; // DWMWCP_ROUND
             DwmSetWindowAttribute(hwnd, CornerPreference, ref rounded, sizeof(int));
+            Conceal();
             Apply(true, false);
         }
 
-        public void Refresh()
+        public void Conceal()
         {
-            if (!glass.GetValueOrDefault(true)) return;
-            // Let DWM consume the newly visible surface first. Rebuild a backdrop
-            // that may still report Acrylic while drawing the previous surface.
-            DwmFlush();
-            var hwnd = source.Handle;
-            var noMargins = new Margins();
-            int noBackdrop = NoBackdrop;
-            DwmSetWindowAttribute(hwnd, SystemBackdrop, ref noBackdrop, sizeof(int));
-            DwmExtendFrameIntoClientArea(hwnd, ref noMargins);
-            Apply(true, darkInk.GetValueOrDefault(), force: true);
-
-            SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, RefreshFrame);
-            RedrawWindow(hwnd, IntPtr.Zero, IntPtr.Zero, PaintFrameAndChildrenNow);
+            int value = 1;
+            DwmSetWindowAttribute(source.Handle, Cloak, ref value, sizeof(int));
         }
 
-        public void Apply(bool enableGlass, bool useDarkText, bool force = false)
+        public void Present()
         {
-            if (!force && glass == enableGlass && darkInk == useDarkText) return;
+            // WPF has submitted the staged layout. The HWND remains composed
+            // while cloaked, so DWM can process it before making it visible.
+            DwmFlush();
+            int value = 0;
+            DwmSetWindowAttribute(source.Handle, Cloak, ref value, sizeof(int));
+        }
+
+        public void Apply(bool enableGlass, bool useDarkText)
+        {
+            if (glass == enableGlass && darkInk == useDarkText) return;
             glass = enableGlass;
             darkInk = useDarkText;
             int dark = useDarkText ? 0 : 1;
             DwmSetWindowAttribute(source.Handle, DarkMode, ref dark, sizeof(int));
-            int material = enableGlass ? DesktopAcrylic : NoBackdrop;
+            if (enableGlass)
+            {
+                source.CompositionTarget.BackgroundColor = Colors.Transparent;
+                window.Background = Brushes.Transparent;
+            }
             var margins = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
-            AcrylicActive = DwmSetWindowAttribute(source.Handle, SystemBackdrop, ref material, sizeof(int)) == 0
-                && enableGlass && DwmExtendFrameIntoClientArea(source.Handle, ref margins) == 0;
+            int material = DesktopAcrylic;
+            AcrylicActive = enableGlass && DwmExtendFrameIntoClientArea(source.Handle, ref margins) == 0
+                && DwmSetWindowAttribute(source.Handle, SystemBackdrop, ref material, sizeof(int)) == 0;
             if (!AcrylicActive)
             {
+                material = NoBackdrop;
+                DwmSetWindowAttribute(source.Handle, SystemBackdrop, ref material, sizeof(int));
                 margins = new Margins();
                 DwmExtendFrameIntoClientArea(source.Handle, ref margins);
             }
