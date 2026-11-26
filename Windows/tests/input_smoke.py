@@ -228,6 +228,106 @@ def screen_pixel(x, y):
         release_dc(None, dc)
 
 
+def work_area():
+    area = W.RECT()
+    get_work = api("SystemParametersInfoW", W.BOOL, W.UINT, W.UINT, C.c_void_p, W.UINT)
+    assert get_work(0x30, 0, C.byref(area), 0)
+    return area
+
+
+def mouse_click(x, y):
+    assert move(x, y)
+    mouse(2, 0, 0, 0, 0)
+    mouse(4, 0, 0, 0, 0)
+
+
+def drag_widget(app, target_left):
+    left, top, right, _ = window_geometry(app.hwnd)
+    x, y = (left+right)//2, top+12
+    assert move(x, y)
+    mouse(2, 0, 0, 0, 0)
+    time.sleep(.2)
+    offset = target_left-left
+    for step in range(1, 9):
+        assert move(x + round(offset*step/8), y)
+        time.sleep(.04)
+    mouse(4, 0, 0, 0, 0)
+
+
+def test_edges(app):
+    work = work_area()
+    tab_caption = "DeskCal \u8fb9\u7f18\u628a\u624b"
+    left, top, right, bottom = window_geometry(app.hwnd)
+    width, height = right-left, bottom-top
+    middle = (work.left+work.right-width)//2
+    for target, side in [(work.left+4, "left"), (work.right-width-4, "right")]:
+        drag_widget(app, target)
+        tab = wait(lambda: find(None, tab_caption), "edge tab created")
+        wait(lambda: visible(tab) and not visible(app.hwnd), "edge tab only")
+        x1,y1,x2,y2 = window_geometry(tab)
+        if side == "left":
+            assert abs(x1-work.left) <= 2, (x1, x2)
+        else:
+            assert abs(x2-work.right) <= 2, (x1, x2)
+        assert y2-y1 > 40 and x2-x1 > 8
+        mouse_click((x1+x2)//2, (y1+y2)//2)
+        wait(lambda: presented(app.hwnd) and not visible(tab), "edge tab expands calendar")
+        expected_left = work.left if side=="left" else work.right-width
+        assert window_geometry(app.hwnd) == (expected_left,top,expected_left+width,bottom)
+        assert_acrylic(app.hwnd)
+        app.click("#next")
+        app.click("#prev")
+        if side == "left":
+            mouse_click(expected_left+width-55, top+15)
+            wait(lambda: visible(tab) and not visible(app.hwnd), "header collapses docked calendar")
+            app.js("tray:left")
+            wait(lambda: presented(app.hwnd) and not visible(tab), "tray opens edge-hidden calendar")
+            app.js("tray:left")
+            wait(lambda: not visible(app.hwnd) and not visible(tab), "tray keeps both surfaces hidden")
+            app.js("tray:left")
+            wait(lambda: presented(app.hwnd), "tray restores docked calendar")
+        drag_widget(app, middle)
+        wait(lambda: abs(window_geometry(app.hwnd)[0]-middle) <= 3, "drag moves window away from edge")
+        assert presented(app.hwnd) and not visible(tab)
+    print("PASS: actual mouse left/right snap, click expand, collapse, undock and tray transitions.", flush=True)
+
+
+def test_size(app):
+    app.click("#gear")
+    original = window_geometry(app.hwnd)
+    submit = "#window-size button"
+    app.click("#win-width")
+    key(0x11, 0, 0, 0); type_letters("a"); key(0x11, 0, 2, 0)
+    type_letters("x")
+    app.click(submit)
+    assert window_geometry(app.hwnd) == original
+    assert app.js("document.querySelector('#window-size-status').textContent")
+
+    def enter(width, height):
+        app.js(f"document.querySelector('#win-width').value={json.dumps(width)};"
+               f"document.querySelector('#win-height').value={json.dumps(height)}")
+        app.click(submit)
+
+    for bad in ["", "-10", "9999999999"]:
+        enter(bad, "510")
+        assert window_geometry(app.hwnd) == original
+
+    def stored(width,height):
+        app.until(f"S.settings.winWidth==={width} && S.settings.winHeight==={height}")
+
+    enter("1","2")
+    stored(380,300)
+    enter("999999999","999999999")
+    ratio = app.js("devicePixelRatio")
+    work = work_area()
+    stored(int((work.right-work.left)/ratio),int((work.bottom-work.top)/ratio))
+    assert_acrylic(app.hwnd)
+    enter("640","510")
+    stored(640,510)
+    app.click("#gear")
+    print("PASS: numeric keyboard, invalid/blank/negative/overflow input, min and current work area clamps.", flush=True)
+
+
 def run(exe, profile):
     current = "JSON.parse(localStorage.getItem('deskcal-personal-v1')||'{\"todos\":[]}').todos"
     app = Widget(exe, profile)
@@ -320,16 +420,21 @@ def run(exe, profile):
         down, clicks = app.js("window.deskcalInputStatus()")
         assert down>=18 and clicks>=18
         print(f"PASS: {down} OS pointer downs, {clicks} clicks, editor focus/typing, dialogs, views, scroll, focus return.", flush=True)
+        test_size(app)
+        test_edges(app)
     finally:
         app.close()
     assert app.proc.returncode == 0, "Tray exit must end the process normally"
     app = Widget(exe, profile)
     try:
         app.until(current + ".length===1 && " + current + "[0].title==='revised'")
+        ratio = app.js("devicePixelRatio")
+        left, top, right, bottom = window_geometry(app.hwnd)
+        assert (right-left,bottom-top) == (round(640*ratio),round(510*ratio))
         app.click("#bak")
         app.click("[data-bdel]")
         app.until(current + ".length===0")
-        print("PASS: restart persistence and deletion.", flush=True)
+        print("PASS: restart preserves size and todos; deletion works.", flush=True)
     finally:
         app.close()
 
