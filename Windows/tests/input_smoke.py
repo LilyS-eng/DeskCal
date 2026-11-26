@@ -5,6 +5,7 @@ observer only reads the DOM; clicks, wheel, typing and focus use Windows.
 """
 import base64
 import ctypes as C
+from datetime import datetime, timedelta
 from ctypes import wintypes as W
 import json
 import os
@@ -36,6 +37,7 @@ style = api("GetWindowLongW", W.LONG, hwnd_t, C.c_int)
 foreground = api("SetForegroundWindow", W.BOOL, hwnd_t)
 active = api("GetForegroundWindow", hwnd_t)
 post = api("PostMessageW", W.BOOL, hwnd_t, W.UINT, W.WPARAM, W.LPARAM)
+visible = api("IsWindowVisible", W.BOOL, hwnd_t)
 move = api("SetCursorPos", W.BOOL, C.c_int, C.c_int)
 mouse = api("mouse_event", None, W.DWORD, W.DWORD, W.DWORD, W.DWORD, C.c_size_t)
 key = api("keybd_event", None, W.BYTE, W.BYTE, W.DWORD, C.c_size_t)
@@ -94,7 +96,7 @@ class Widget:
         Thread(target=read_output, daemon=True).start()
         self.hwnd = None
         try:
-            self.hwnd = wait(lambda: find(None, "DeskCal 1.0.3"), "window", 120)
+            self.hwnd = wait(lambda: find(None, "DeskCal 1.0.4"), "window", 120)
             wait(lambda: self.js("document.querySelectorAll('.cell').length===42"),
                  "WebView2 renders the initial calendar", 90)
             foreground(self.hwnd)
@@ -103,9 +105,12 @@ class Widget:
             self.close()
             raise
 
-    def js(self, expression):
+    def send(self, expression):
         self.proc.stdin.write(base64.b64encode(expression.encode()).decode() + "\n")
         self.proc.stdin.flush()
+
+    def js(self, expression):
+        self.send(expression)
         line = self.replies.get(timeout=90)
         if line in ("EOF", "ERR"):
             raise RuntimeError("Observer returned " + line)
@@ -147,14 +152,21 @@ class Widget:
         mouse(0x800, 0, 0, delta & 0xffffffff, 0)
         time.sleep(.35)
 
-    def close(self):
-        if self.hwnd:
-            post(self.hwnd, 0x10, 0, 0)
+    def close(self, verify=False):
+        if self.proc.poll() is not None:
+            assert not verify, "DeskCal quit before the tray exit action"
+            return
         try:
-            self.proc.wait(timeout=8 if self.hwnd else 1)
-        except subprocess.TimeoutExpired:
+            if self.hwnd:
+                self.send("tray:exit")
+            code = self.proc.wait(timeout=12 if self.hwnd else 1)
+            if verify:
+                assert code == 0, code
+        except (OSError, subprocess.TimeoutExpired):
             self.proc.kill()
             self.proc.wait()
+            if verify:
+                raise
 
 
 def capture(hwnd):
@@ -194,6 +206,19 @@ def run(exe, profile):
         print("Initial profile empty; Acrylic, tool-window and normal input styles verified.", flush=True)
         if os.environ.get("GITHUB_ACTIONS") == "true":
             capture(app.hwnd)
+        corner, bounds = W.POINT(), W.RECT()
+        assert origin(app.hwnd, C.byref(corner)) and rect(app.hwnd, C.byref(bounds))
+        assert move(corner.x + bounds.right - 10, corner.y + 6)
+        mouse(2, 0, 0, 0, 0)
+        mouse(4, 0, 0, 0, 0)
+        wait(lambda: not visible(app.hwnd), "window close button hides DeskCal")
+        assert app.proc.poll() is None
+        for expected in [True, False, True]:
+            app.js("tray:left")
+            wait(lambda: bool(visible(app.hwnd)) == expected, "tray toggles window")
+        restored = W.POINT()
+        assert origin(app.hwnd, C.byref(restored)) and (corner.x, corner.y) == (restored.x, restored.y)
+        print("PASS: close button hides, tray toggles, window position restored.", flush=True)
         month = app.js("document.querySelector('#title-main').textContent")
         app.click("#next")
         assert app.js("document.querySelector('#title-main').textContent") != month
@@ -247,6 +272,7 @@ def run(exe, profile):
         print(f"PASS: {down} OS pointer downs, {clicks} clicks, editor focus/typing, dialogs, views, scroll, focus return.", flush=True)
     finally:
         app.close()
+    assert app.proc.returncode == 0, "Tray exit must end the process normally"
     app = Widget(exe, profile)
     try:
         app.until(current + ".length===1 && " + current + "[0].title==='revised'")
@@ -258,8 +284,61 @@ def run(exe, profile):
         app.close()
 
 
+def test_reminders(exe, profile):
+    caption = "DeskCal \u63d0\u9192"
+    receipts = Path(profile) / "DeskCal-reminder-receipts.json"
+
+    def due_after(minutes):
+        return datetime.now().replace(second=0, microsecond=0) + timedelta(minutes=minutes)
+
+    def set_time(app, due):
+        app.js(f"document.querySelector('#f-date').value='{due:%Y-%m-%d}';"
+               f"document.querySelector('#f-time').value='{due:%H:%M}'")
+        app.click("#f-ok")
+
+    def expect_popup(due, count):
+        assert not find(None, caption), "Reminder visible before its scheduled minute"
+        remaining = max(0, (due - datetime.now()).total_seconds())
+        hwnd = wait(lambda: find(None, caption), caption, remaining + 16)
+        wait(lambda: receipts.exists() and len(json.loads(receipts.read_text())) == count, "persisted receipt")
+        assert post(hwnd, 0x10, 0, 0)
+        wait(lambda: not find(None, caption), "reminder dismissed")
+
+    app = Widget(exe, profile)
+    due = due_after(2)
+    try:
+        app.click("#add")
+        app.until("document.activeElement.id==='f-title'")
+        type_letters("reminder")
+        set_time(app, due)
+    finally:
+        app.close(verify=True)
+
+    app = Widget(exe, profile)
+    try:
+        app.js("tray:left")
+        wait(lambda: not visible(app.hwnd), "hidden before scheduled time")
+        expect_popup(due, 1)
+        assert not visible(app.hwnd), "Reminder reopened the widget"
+    finally:
+        app.close(verify=True)
+
+    app = Widget(exe, profile)
+    try:
+        time.sleep(6)
+        assert not find(None, caption), "Reminder duplicated after restart"
+        app.click("#bak")
+        app.click(".bak-row [data-edit]")
+        new_due = due_after(1 if datetime.now().second < 50 else 2)
+        set_time(app, new_due)
+        expect_popup(new_due, 2)
+        print("PASS: hidden reminder after restart, persisted deduplication, edited time fires again.", flush=True)
+    finally:
+        app.close(verify=True)
+
+
 if __name__ == "__main__":
-    if find(None, "DeskCal 1.0.3"):
+    if find(None, "DeskCal 1.0.4"):
         sys.exit("Exit the running copy before running this desktop test.")
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as workspace:
         source = Path(sys.argv[1]).resolve()
@@ -276,8 +355,9 @@ if __name__ == "__main__":
                         "/win32manifest:" + str(Path(__file__).resolve().parents[1] / "app.manifest"),
                         *["/r:" + str(wpf / (name + ".dll")) for name in
                           ("WindowsBase", "PresentationCore", "PresentationFramework")],
-                        "/r:" + str(framework / "System.Xaml.dll"),
+                        *["/r:" + str(framework / (name + ".dll")) for name in ("System.Xaml", "System.Windows.Forms")],
                         *["/r:" + str(app_dir / ("Microsoft.Web.WebView2." + name + ".dll"))
                           for name in ("Core", "Wpf")], str(tests / "InputObserver.cs")], check=True)
         shutil.copyfile(str(app_dir / source.name) + ".config", str(observer) + ".config")
         run(str(app_dir / source.name), str(profile))
+        test_reminders(str(app_dir / source.name), str(profile))

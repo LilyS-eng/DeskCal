@@ -1,6 +1,6 @@
 # DeskCal
 
-适用于 Windows 11 和 macOS 的日历与待办小组件。Windows 1.0.3 使用独立无边框挂件，macOS 版显示在桌面层。
+适用于 Windows 11 和 macOS 的日历与待办小组件。Windows 1.0.4 使用独立无边框挂件，macOS 版显示在桌面层。
 
 macOS 外壳用 Swift 的 `NSPanel` + `WKWebView`，Windows 外壳用 WPF + WebView2，两者共用单文件 `index.html`。所以视觉和交互全在一个网页里，想改什么改什么。
 
@@ -10,17 +10,23 @@ macOS 外壳用 Swift 的 `NSPanel` + `WKWebView`，Windows 外壳用 WPF + WebV
 
 ## Windows 11 移植版
 
-Windows 1.0.3 沿用已通过真机输入测试的 1.0.2 标准 WPF WebView2 子窗口。Windows 11 支持时，DWM 在窗口背后绘制 Desktop Acrylic，网页以原卡片透明度绘制。系统管理模糊强度，设置中可以开关毛玻璃。关闭时或系统 API 不支持时使用兼容底色。窗口在系统关闭透明效果或某些远程会话中可能呈现纯色。
+Windows 1.0.4 在 1.0.3 的标准 WPF WebView2 窗口上开发。首次内容加载、初始尺寸应用及从托盘恢复后，窗口会重新应用 DWM 背景并请求系统重绘边框。Windows 11 支持时，DWM 在窗口背后绘制 Desktop Acrylic，网页以原卡片透明度绘制。系统管理模糊强度，设置中可以开关毛玻璃。关闭时或系统 API 不支持时使用兼容底色。窗口在系统关闭透明效果或某些远程会话中可能呈现纯色。
 
 挂件首次打开在主屏工作区右下角，拖顶部短横条移动。它使用正常可激活的顶层工具窗口，隐藏任务栏与 Alt+Tab 入口，保留通知区域的日历图标。其他应用获得焦点后可覆盖它；点击挂件时它仍能正常获得焦点。没有 WorkerW / Progman 嵌入、鼠标穿透、强制置底或始终置顶。
 
 ### 打开程序
 
-先从托盘退出旧版，将 x64 压缩包完整解压到新文件夹，再双击 `DeskCal.exe`。右下角显示「DeskCal 1.0.3」。托盘菜单可显示窗口、刷新、查看输入诊断或退出。运行需要 .NET Framework 4.8 或更高版本和 [Microsoft Edge WebView2 Evergreen 运行时](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)。
+先从托盘退出旧版，将 x64 压缩包完整解压到新文件夹，再双击 `DeskCal.exe`。右下角显示「DeskCal 1.0.4」。点顶部 × 隐藏，左键单击托盘图标显示或隐藏。右键托盘可显示、隐藏、刷新、查看输入诊断，或选择「退出 DeskCal」结束进程。运行需要 .NET Framework 4.8 或更高版本和 [Microsoft Edge WebView2 Evergreen 运行时](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)。
+
+### 待办提醒
+
+给未完成待办填写日期和时间。到点时 Windows 版会显示「DeskCal 提醒」小窗（时间、标题）并播放一次 Windows 系统提示音。同批提醒合用一个小窗和一次声音。隐藏到托盘后继续计时，退出则停止。重新启动或睡眠唤醒后，最近 90 分钟内错过的提醒会补发一次。
+
+待办仍保存在原来的 localStorage，使用原有日期、时间和完成状态。已有未完成且带时间的待办也参与调度。WebView2 用户目录里只另存已提醒的去重记录，键由待办 ID、日期和时间生成；改到新时间后按新时间提醒。
 
 ### 空白日历与旧版迁移
 
-新用户首次启动时待办为零，1.0.2 用户原有待办与设置直接沿用。更早版本中的记录仅在「设置 → 从旧版选择待办」勾选并迁移后才加入个人清单。数据位于 `%LOCALAPPDATA%\DeskCal\WebView2`，升级无需删除此目录。
+新用户首次启动时待办为零，1.0.2 和 1.0.3 用户原有待办与设置直接沿用。更早版本中的记录仅在「设置 → 从旧版选择待办」勾选并迁移后才加入个人清单。数据位于 `%LOCALAPPDATA%\DeskCal\WebView2`，升级无需删除此目录。
 
 ### 自行构建
 
@@ -39,7 +45,7 @@ dotnet build Windows/DeskCal.csproj -c Release
 - 点「＋」创建待办，点圆圈勾选或恢复。在日视图或「☰ 全部待办」里点「编辑」，可改内容、日期、时间和分类。
 - 点击设置可调整宽度、缩放、卡片透明度，或开关系统毛玻璃。使用窗口顶部短横条移动，从系统托盘找回窗口。
 - 若遇到输入问题，点几次日期和按钮，再从托盘选择「查看输入诊断」。计数表示本次加载后网页收到的按下与点击次数。
-- Windows 原生输入回归脚本位于 `Windows/tests/input_smoke.py`。在已解锁的专用 Windows 测试桌面，退出其他 DeskCal 实例，安装 Python 3.10+ 后，执行 `python Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe`。脚本以临时 WebView2 配置运行，通过 Windows 鼠标和键盘操作实际控件，覆盖焦点切换、滚动和重启持久化。独立测试程序在临时目录运行发布版入口并读取页面状态。
+- Windows 原生输入回归脚本位于 `Windows/tests/input_smoke.py`。在已解锁的专用 Windows 测试桌面，退出其他 DeskCal 实例，安装 Python 3.10+ 后，执行 `python Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe`。脚本以临时 WebView2 配置运行，通过 Windows 鼠标和键盘操作实际控件，覆盖焦点切换、滚动、关闭隐藏、托盘回调、重启持久化及真实定时提醒。独立测试程序在临时目录运行发布版入口并读取页面状态。
 
 ## 特性
 

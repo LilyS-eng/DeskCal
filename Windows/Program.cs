@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using Microsoft.Win32;
@@ -24,7 +25,7 @@ namespace DeskCal
                     MessageBox.Show("DeskCal 已经在运行。请先从系统托盘退出正在运行的版本。", "DeskCal");
                     return;
                 }
-                var app = new Application();
+                var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
                 app.Run(new Widget());
             }
         }
@@ -33,19 +34,21 @@ namespace DeskCal
     internal sealed class Widget : Window
     {
         private const string Host = "deskcal.invalid";
-        private const string Page = "https://" + Host + "/index.html?widget=1&host=windows&build=1.0.3";
+        private const string Page = "https://" + Host + "/index.html?widget=1&host=windows&build=1.0.4";
         private readonly string dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DeskCal");
         private readonly WebView2 web = new WebView2();
         private readonly Forms.ContextMenuStrip menu = new Forms.ContextMenuStrip();
         private Forms.NotifyIcon tray;
         private bool closing;
+        private bool frameRefreshQueued;
+        private ReminderScheduler reminders;
         private bool firstAppearance = true;
         private WindowAppearance appearance;
         private const int GripHeight = 12;
 
         public Widget()
         {
-            Title = "DeskCal 1.0.3";
+            Title = "DeskCal 1.0.4";
             Width = 620;
             Height = 520 + GripHeight;
             WindowStyle = WindowStyle.None;
@@ -70,20 +73,41 @@ namespace DeskCal
                 Child = new Border { Width = 32, Height = 3, CornerRadius = new CornerRadius(2),
                     Background = Brushes.LightSlateGray, VerticalAlignment = VerticalAlignment.Center }
             };
+            var close = new Button {
+                Content = "×", Width = 25, Height = GripHeight, FontSize = 11,
+                Padding = new Thickness(0), BorderThickness = new Thickness(0),
+                Foreground = Brushes.LightSlateGray, Background = Brushes.Transparent,
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                ToolTip = "隐藏到托盘"
+            };
+            System.Windows.Automation.AutomationProperties.SetName(close, "隐藏到托盘");
+            close.Click += (_, __) => Close();
+            var header = new Grid { Height = GripHeight };
+            header.Children.Add(handle);
+            header.Children.Add(close);
             handle.MouseLeftButtonDown += (_, e) => {
                 if (e.ButtonState == MouseButtonState.Pressed) DragMove();
             };
             var layout = new DockPanel();
-            DockPanel.SetDock(handle, Dock.Top);
-            layout.Children.Add(handle);
+            DockPanel.SetDock(header, Dock.Top);
+            layout.Children.Add(header);
             layout.Children.Add(web);
             Content = layout;
 
             SourceInitialized += (_, __) => appearance = new WindowAppearance(this);
             Loaded += Start;
+            ContentRendered += (_, __) => QueueFrameRefresh();
+            Closing += (_, e) => {
+                if (closing || tray == null) return;
+                e.Cancel = true;
+                Hide();
+            };
+            Application.Current.SessionEnding += EndSession;
             Closed += (_, __) =>
             {
                 closing = true;
+                Application.Current.SessionEnding -= EndSession;
+                reminders?.Dispose();
                 tray?.Dispose();
                 menu.Dispose();
                 web.Dispose();
@@ -104,6 +128,7 @@ namespace DeskCal
                 await web.EnsureCoreWebView2Async(env);
                 if (closing) return;
                 var core = web.CoreWebView2;
+                reminders = new ReminderScheduler(Dispatcher, env.UserDataFolder);
                 core.SetVirtualHostNameToFolderMapping(Host, assets, CoreWebView2HostResourceAccessKind.Deny);
                 core.Settings.AreDefaultContextMenusEnabled = false;
                 core.Settings.IsStatusBarEnabled = false;
@@ -118,7 +143,11 @@ namespace DeskCal
                 core.WebMessageReceived += Receive;
                 core.DownloadStarting += SaveDownload;
                 core.NavigationCompleted += (_, e) => {
-                    if (e.IsSuccess && IsActive) web.Focus();
+                    if (e.IsSuccess)
+                    {
+                        QueueFrameRefresh();
+                        if (IsActive) web.Focus();
+                    }
                     if (!e.IsSuccess && e.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
                         MessageBox.Show("日历载入失败。请从系统托盘刷新组件。", Title);
                 };
@@ -131,18 +160,28 @@ namespace DeskCal
                         string status = parts.Length == 2
                             ? $"网页已就绪。自上次加载起，按下 {parts[0]} 次，点击 {parts[1]} 次。"
                             : "网页的输入诊断尚未就绪。";
-                        MessageBox.Show(status + (appearance.AcrylicActive ? "\n已启用系统 Acrylic。" : "\n使用兼容底色。"), "DeskCal 1.0.3 · 输入诊断");
+                        MessageBox.Show(status + (appearance.AcrylicActive ? "\n已启用系统 Acrylic。" : "\n使用兼容底色。"), "DeskCal 1.0.4 · 输入诊断");
                     }
                     catch (Exception e) { if (!closing) MessageBox.Show(e.Message, Title); }
                 });
-                menu.Items.Add("显示窗口", null, (_, __) => Recover());
+                var show = new Forms.ToolStripMenuItem("显示 DeskCal", null, (_, __) => Recover());
+                var hide = new Forms.ToolStripMenuItem("隐藏 DeskCal", null, (_, __) => Hide());
+                menu.Items.Insert(0, show);
+                menu.Items.Insert(1, hide);
+                menu.Items.Insert(2, new Forms.ToolStripSeparator());
                 menu.Items.Add(new Forms.ToolStripSeparator());
-                menu.Items.Add("退出", null, (_, __) => Close());
+                menu.Items.Add("退出 DeskCal", null, (_, __) => Exit());
+                menu.Opening += (_, __) => {
+                    show.Enabled = !IsVisible;
+                    hide.Enabled = IsVisible;
+                };
                 tray = new Forms.NotifyIcon {
                     Icon = System.Drawing.Icon.ExtractAssociatedIcon(Forms.Application.ExecutablePath),
-                    Text = "DeskCal 1.0.3", ContextMenuStrip = menu, Visible = true
+                    Text = "DeskCal 1.0.4", ContextMenuStrip = menu, Visible = true
                 };
-                tray.DoubleClick += (_, __) => Recover();
+                tray.MouseClick += (_, e) => {
+                    if (e.Button == Forms.MouseButtons.Left) ToggleVisibility();
+                };
                 core.Navigate(Page);
             }
             catch (Exception e)
@@ -152,8 +191,37 @@ namespace DeskCal
                     ? "请安装 Microsoft Edge WebView2 Evergreen 运行时，再打开 DeskCal。"
                     : e.Message;
                 MessageBox.Show("DeskCal 无法启动。\n" + detail, Title, MessageBoxButton.OK, MessageBoxImage.Error);
-                Close();
+                Exit();
             }
+        }
+
+        private void EndSession(object sender, SessionEndingCancelEventArgs e)
+        {
+            // WPF's Application session-ending handler performs the shutdown.
+            closing = true;
+        }
+
+        private void Exit()
+        {
+            closing = true;
+            Close();
+        }
+
+        private void ToggleVisibility()
+        {
+            if (IsVisible) Hide();
+            else Recover();
+        }
+
+        private void QueueFrameRefresh()
+        {
+            if (frameRefreshQueued || closing || !IsVisible) return;
+            frameRefreshQueued = true;
+            // Wait for this layout and the child HWND's first frame to settle.
+            Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() => {
+                frameRefreshQueued = false;
+                if (IsVisible && !closing) appearance.Refresh();
+            }));
         }
 
         private void Recover()
@@ -162,6 +230,7 @@ namespace DeskCal
             Show();
             Activate();
             web.Focus();
+            QueueFrameRefresh();
         }
 
         private void Receive(object sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -170,6 +239,12 @@ namespace DeskCal
             string message;
             try { message = e.TryGetWebMessageAsString(); }
             catch (ArgumentException) { return; }
+            const string schedule = "reminders ";
+            if (message != null && message.StartsWith(schedule, StringComparison.Ordinal))
+            {
+                reminders.Update(message.Substring(schedule.Length));
+                return;
+            }
             var p = (message ?? "").Split(' ');
             if (p.Length != 5 || p[0] != "appearance" || !int.TryParse(p[1], out int width) ||
                 !int.TryParse(p[2], out int percent) || !int.TryParse(p[3], out int blur)) return;
@@ -185,6 +260,7 @@ namespace DeskCal
                 Left = Math.Max(work.Left, work.Right - Width - 32);
                 Top = Math.Max(work.Top, work.Bottom - Height - 32);
                 firstAppearance = false;
+                QueueFrameRefresh();
             }
         }
 

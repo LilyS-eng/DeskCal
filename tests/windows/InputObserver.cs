@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using Forms = System.Windows.Forms;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -45,6 +47,18 @@ internal class InputObserver
     private static Task<string> Inspect(string expression)
     {
         var app = Application.Current;
+        if (expression.StartsWith("tray:"))
+        {
+            var widget = app.MainWindow;
+            var tray = (Forms.NotifyIcon)widget.GetType().GetField("tray",
+                BindingFlags.Instance | BindingFlags.NonPublic).GetValue(widget);
+            if (expression == "tray:left")
+                typeof(Forms.NotifyIcon).GetMethod("OnMouseClick", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .Invoke(tray, new object[] { new Forms.MouseEventArgs(Forms.MouseButtons.Left, 1, 0, 0, 0) });
+            else if (expression == "tray:exit")
+                tray.ContextMenuStrip.Items[tray.ContextMenuStrip.Items.Count - 1].PerformClick();
+            return Task.FromResult("true");
+        }
         var layout = app == null || app.MainWindow == null ? null : app.MainWindow.Content as Panel;
         var browser = layout == null ? null : layout.Children.OfType<WebView2>().FirstOrDefault();
         if (browser == null || browser.CoreWebView2 == null) return Task.FromResult("null");

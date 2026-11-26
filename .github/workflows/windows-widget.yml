@@ -1,7 +1,7 @@
 name: Windows widget input
 on:
   push:
-    branches: [windows-1.0.3]
+    branches: [windows-1.0.4]
   workflow_dispatch:
 permissions:
   contents: read
@@ -40,7 +40,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: DeskCal-1.0.3-x64-${{ matrix.os }}
+          name: DeskCal-1.0.4-x64-${{ matrix.os }}
           path: Windows/bin/Release/net48/
       - uses: actions/upload-artifact@v4
         if: always()

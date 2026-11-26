@@ -589,7 +589,13 @@ if(!windowsHost && !localStorage.getItem('deskcal-mig-donevisible')){
   S.settings.hideDone = false;
   try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); localStorage.setItem('deskcal-mig-donevisible','1'); }catch(e){}
 }
-const saveLocal = () => { try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){ try{console.warn('[deskcal] saveLocal fail',e);}catch(_){ } } };
+function syncReminders(){
+  if(!windowsHost) return;
+  const timed = S.todos.filter(t=>!t.done && t.time)
+    .map(t=>[String(t.id), t.title, t.date, t.time]);
+  windowsHost.postMessage('reminders '+JSON.stringify(timed));
+}
+const saveLocal = () => { try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); syncReminders(); }catch(e){ try{console.warn('[deskcal] saveLocal fail',e);}catch(_){ } } };
 const save = () => { saveLocal(); schedulePush(); };
 const saveSet = () => { S.settings.updatedAt = Date.now(); save(); };   // 外观设置变更，带时间戳上传到服务端
 
@@ -648,6 +654,8 @@ if(new URLSearchParams(location.search).has('widget')) document.body.classList.a
 
 if(windowsHost){
   document.body.classList.add('windows-widget');
+  const timeLabel = document.getElementById('f-time').previousElementSibling;
+  timeLabel.textContent = '时间（到时提醒）';
   const blur = document.getElementById('r-blur');
   // DWM chooses the blur radius; keep the saved numeric value compatible with other hosts.
   blur.type = 'checkbox';
@@ -1257,6 +1265,7 @@ function toast(msg){
 
 /* ================= 启动 ================= */
 render();
+syncReminders();
 if(syncEnabled){
   setSync('ing'); pull();
   setInterval(()=>{ if(syncState !== 'ing') pull(); }, 60000);
@@ -1270,7 +1279,7 @@ if(syncEnabled){
 (function(){
   const v = new URLSearchParams(location.search).get('v') || '?';
   const el = document.getElementById('build-tag');
-  if(el) el.textContent = windowsHost ? 'DeskCal 1.0.3' : 'v' + v;
+  if(el) el.textContent = windowsHost ? 'DeskCal 1.0.4' : 'v' + v;
   try{ console.log('[deskcal] build v' + v + ' loaded @ ' + new Date().toISOString()); }catch(e){}
 })();
 </script>
