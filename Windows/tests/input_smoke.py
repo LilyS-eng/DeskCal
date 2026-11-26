@@ -1,8 +1,9 @@
 """Run on an unlocked Windows test desktop: python input_smoke.py path/to/DeskCal.exe
 
-Requires websocket-client. Uses a temporary WebView2 profile. CDP only inspects
-the document and locates controls; clicks, wheel, typing and focus use Windows.
+Uses a temporary WebView2 profile and the released DeskCal entry point. A test
+observer only reads the DOM; clicks, wheel, typing and focus use Windows.
 """
+import base64
 import ctypes as C
 from ctypes import wintypes as W
 import json
@@ -12,9 +13,9 @@ import subprocess
 import sys
 import tempfile
 import time
-from urllib.request import ProxyHandler, build_opener
-
-import websocket
+import shutil
+from threading import Thread
+from queue import Queue
 
 u = C.windll.user32
 
@@ -81,57 +82,33 @@ def wait(fn, label, seconds=15):
 
 class Widget:
     def __init__(self, exe, profile):
-        port_file = Path(profile) / "EBWebView" / "DevToolsActivePort"
-        port_file.unlink(missing_ok=True)
-        env = dict(os.environ, WEBVIEW2_USER_DATA_FOLDER=profile,
-                   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=0 --enable-logging")
-        self.proc = subprocess.Popen([exe], env=env)
-        self.ws = None
+        env = dict(os.environ, WEBVIEW2_USER_DATA_FOLDER=profile)
+        self.proc = subprocess.Popen([str(Path(exe).with_name("InputObserver.exe")), exe], env=env,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        self.replies = Queue()
+        def read_output():
+            for line in self.proc.stdout:
+                self.replies.put(line.strip())
+            self.replies.put("EOF")
+        Thread(target=read_output, daemon=True).start()
         self.hwnd = None
-        targets = set()
-        opener = build_opener(ProxyHandler({}))
         try:
-            def page():
-                if self.proc.poll() is not None:
-                    raise RuntimeError("DeskCal exited before loading")
-                try:
-                    port = int(port_file.read_text().splitlines()[0])
-                    with opener.open(f"http://127.0.0.1:{port}/json/list", timeout=2) as response:
-                        pages = json.load(response)
-                        targets.update(x.get("url", "") for x in pages)
-                        return next((x for x in pages
-                                     if x["url"].startswith("https://deskcal.invalid/index.html")), None)
-                except (OSError, ValueError, IndexError):
-                    return None
-            target = wait(page, "WebView2 calendar", 90)
-            self.ws = websocket.create_connection(target["webSocketDebuggerUrl"], suppress_origin=True, timeout=8)
-            self.seq = 0
-            self.hwnd = wait(lambda: find(None, "DeskCal 1.0.3"), "window")
+            self.hwnd = wait(lambda: find(None, "DeskCal 1.0.3"), "window", 30)
             foreground(self.hwnd)
             self.until("document.querySelectorAll('.cell').length===42")
         except BaseException:
-            print("Process", self.proc.poll(), "windows", window_texts(self.proc.pid),
-                  "CDP pages", targets, "profile files", os.listdir(profile), flush=True)
-            for log in Path(profile).rglob("chrome_debug.log"):
-                print(log.read_text(errors="replace")[-3500:], flush=True)
-            subprocess.run(["powershell", "-NoProfile", "-Command",
-                "Get-Process explorer,DeskCal,msedgewebview2 -ErrorAction SilentlyContinue | "
-                "Format-Table ProcessName,Id,SessionId,MainWindowTitle; "
-                "Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | "
-                "Where-Object { $_.CommandLine -notmatch '--type=' } | Select-Object -ExpandProperty CommandLine"])
+            print("Process", self.proc.poll(), "windows", window_texts(self.proc.pid), flush=True)
             self.close()
             raise
 
     def js(self, expression):
-        self.seq += 1
-        self.ws.send(json.dumps({"id": self.seq, "method": "Runtime.evaluate",
-                                 "params": {"expression": expression, "returnByValue": True}}))
-        while True:
-            msg = json.loads(self.ws.recv())
-            if msg.get("id") == self.seq:
-                result = msg["result"]
-                assert "exceptionDetails" not in result, result
-                return result["result"].get("value")
+        self.proc.stdin.write(base64.b64encode(expression.encode()).decode() + "\n")
+        self.proc.stdin.flush()
+        line = self.replies.get(timeout=30)
+        if line in ("EOF", "ERR"):
+            raise RuntimeError("Observer returned " + line)
+        return json.loads(base64.b64decode(line))
 
     def until(self, condition):
         return wait(lambda: self.js(condition), condition)
@@ -161,8 +138,6 @@ class Widget:
         time.sleep(.35)
 
     def close(self):
-        if self.ws:
-            self.ws.close()
         if self.hwnd:
             post(self.hwnd, 0x10, 0, 0)
         try:
@@ -224,7 +199,7 @@ def run(exe, profile):
                             None, None, None, None)
         assert probe
         try:
-            move(x+15, 15); mouse(2, 0, 0, 0, 0); mouse(4, 0, 0, 0, 0)
+            foreground(probe)
             wait(lambda: active()==probe, "focus leaves widget")
             app.click("#gear")
             app.until("document.querySelector('#panel').classList.contains('open')")
@@ -257,5 +232,23 @@ def run(exe, profile):
 if __name__ == "__main__":
     if find(None, "DeskCal 1.0.3"):
         sys.exit("Exit the running copy before running this desktop test.")
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as profile:
-        run(str(Path(sys.argv[1]).resolve()), profile)
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as workspace:
+        source = Path(sys.argv[1]).resolve()
+        app_dir = Path(workspace) / "app"
+        shutil.copytree(source.parent, app_dir)
+        profile = Path(workspace) / "profile"
+        profile.mkdir()
+        framework = Path(os.environ["SystemRoot"]) / "Microsoft.NET" / "Framework64" / "v4.0.30319"
+        wpf = framework / "WPF"
+        tests = Path(__file__).resolve().parents[2] / "tests" / "windows"
+        observer = app_dir / "InputObserver.exe"
+        subprocess.run([str(framework / "csc.exe"), "/nologo", "/platform:x64", "/target:exe",
+                        "/out:" + str(observer),
+                        "/win32manifest:" + str(Path(__file__).resolve().parents[1] / "app.manifest"),
+                        *["/r:" + str(wpf / (name + ".dll")) for name in
+                          ("WindowsBase", "PresentationCore", "PresentationFramework")],
+                        "/r:" + str(framework / "System.Xaml.dll"),
+                        *["/r:" + str(app_dir / ("Microsoft.Web.WebView2." + name + ".dll"))
+                          for name in ("Core", "Wpf")], str(tests / "InputObserver.cs")], check=True)
+        shutil.copyfile(str(app_dir / source.name) + ".config", str(observer) + ".config")
+        run(str(app_dir / source.name), str(profile))

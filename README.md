@@ -39,7 +39,7 @@ dotnet build Windows/DeskCal.csproj -c Release
 - 点「＋」创建待办，点圆圈勾选或恢复。在日视图或「☰ 全部待办」里点「编辑」，可改内容、日期、时间和分类。
 - 点击设置可调整宽度、缩放、卡片透明度，或开关系统毛玻璃。使用窗口顶部短横条移动，从系统托盘找回窗口。
 - 若遇到输入问题，点几次日期和按钮，再从托盘选择「查看输入诊断」。计数表示本次加载后网页收到的按下与点击次数。
-- Windows 原生输入回归脚本位于 `Windows/tests/input_smoke.py`。在已解锁的专用 Windows 测试桌面，退出其他 DeskCal 实例，安装 Python 3.10+ 和 `websocket-client` 后，执行 `python Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe`。脚本以临时 WebView2 配置运行，通过 Windows 鼠标和键盘操作实际控件，覆盖焦点切换、滚动和重启持久化。调试连接仅由测试进程启用。
+- Windows 原生输入回归脚本位于 `Windows/tests/input_smoke.py`。在已解锁的专用 Windows 测试桌面，退出其他 DeskCal 实例，安装 Python 3.10+ 后，执行 `python Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe`。脚本以临时 WebView2 配置运行，通过 Windows 鼠标和键盘操作实际控件，覆盖焦点切换、滚动和重启持久化。独立测试程序在临时目录运行发布版入口并读取页面状态。
 
 ## 特性
 

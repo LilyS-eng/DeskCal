@@ -17,8 +17,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build x64 widget
         run: dotnet build Windows/DeskCal.csproj -c Release
-      - name: Install test client
-        run: python -m pip install websocket-client==1.8.0
       - name: Ensure Evergreen WebView2 Runtime is available
         shell: pwsh
         run: |
