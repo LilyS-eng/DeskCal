@@ -48,36 +48,6 @@ get_material.argtypes = [hwnd_t, W.DWORD, C.c_void_p, W.DWORD]
 get_material.restype = C.c_long
 
 
-def prepare_hosted_desktop(widget):
-    # An ARM image can have WSL provisioning consoles and a two-window
-    # account welcome screen above regular applications. Minimize those
-    # fixtures on the disposable runner, before the first input assertion.
-    show = api("ShowWindowAsync", W.BOOL, hwnd_t, C.c_int)
-    is_visible = api("IsWindowVisible", W.BOOL, hwnd_t)
-    caption_of = api("GetWindowTextW", C.c_int, hwnd_t, W.LPWSTR, C.c_int)
-    class_of = api("GetClassNameW", C.c_int, hwnd_t, W.LPWSTR, C.c_int)
-    callback = C.WINFUNCTYPE(W.BOOL, hwnd_t, W.LPARAM)
-    @callback
-    def clear_fixture(hwnd, unused):
-        if is_visible(hwnd):
-            cls, caption = C.create_unicode_buffer(256), C.create_unicode_buffer(256)
-            class_of(hwnd, cls, len(cls))
-            caption_of(hwnd, caption, len(caption))
-            if cls.value in ("UserOOBEWindowClass", "ConsoleWindowClass") or (
-                    cls.value == "Windows.UI.Core.CoreWindow" and caption.value == "Microsoft account"):
-                show(hwnd, 0)
-        return True
-    u.EnumWindows(clear_fixture, 0)
-    time.sleep(.6)
-    key(0x12, 0, 0, 0)
-    key(0x12, 0, 2, 0)
-    foreground(widget)
-    # Move to the front of the ordinary z-order after hiding fixture windows.
-    # HWND_TOP leaves the application's own topmost flag unchanged.
-    api("SetWindowPos", W.BOOL, hwnd_t, hwnd_t, C.c_int, C.c_int,
-        C.c_int, C.c_int, W.UINT)(widget, None, 0, 0, 0, 0, 3)
-
-
 def window_texts(pid):
     lines = []
     callback = C.WINFUNCTYPE(W.BOOL, hwnd_t, W.LPARAM)
@@ -127,10 +97,7 @@ class Widget:
             self.hwnd = wait(lambda: find(None, "DeskCal 1.0.3"), "window", 120)
             wait(lambda: self.js("document.querySelectorAll('.cell').length===42"),
                  "WebView2 renders the initial calendar", 90)
-            if os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted":
-                prepare_hosted_desktop(self.hwnd)
-            else:
-                foreground(self.hwnd)
+            foreground(self.hwnd)
         except BaseException:
             print("Process", self.proc.poll(), "windows", window_texts(self.proc.pid), flush=True)
             self.close()

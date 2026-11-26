@@ -30,7 +30,13 @@ jobs:
           }
           Get-ChildItem "$edge\*\msedgewebview2.exe" | Select-Object -ExpandProperty FullName
       - name: Exercise real window input
-        run: python Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe
+        shell: pwsh
+        run: |
+          if ($env:RUNNER_ARCH -eq 'ARM64') {
+            python tests/windows/test_desktop.py Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe
+          } else {
+            python Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
