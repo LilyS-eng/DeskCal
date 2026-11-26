@@ -19,10 +19,22 @@ jobs:
         run: dotnet build Windows/DeskCal.csproj -c Release
       - name: Install test client
         run: python -m pip install websocket-client==1.8.0
+      - name: Ensure Evergreen WebView2 Runtime is available
+        shell: pwsh
+        run: |
+          $edge = "${env:ProgramFiles(x86)}\Microsoft\EdgeWebView\Application"
+          if (!(Test-Path "$edge\*\msedgewebview2.exe")) {
+            $installer = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $installer
+            if ((Get-AuthenticodeSignature $installer).Status -ne 'Valid') { throw 'Invalid runtime installer signature' }
+            $p = Start-Process $installer -ArgumentList '/silent','/install' -Wait -PassThru
+            Write-Host "Evergreen bootstrapper exit $($p.ExitCode)"
+          }
+          Get-ChildItem "$edge\*\msedgewebview2.exe" | Select-Object -ExpandProperty FullName
       - name: Exercise real window input
         run: python Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe
       - uses: actions/upload-artifact@v4
-        if: success()
+        if: always()
         with:
           name: DeskCal-1.0.3-x64-${{ matrix.os }}
           path: Windows/bin/Release/net48/

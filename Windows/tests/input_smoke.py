@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from urllib.request import urlopen
+from urllib.request import ProxyHandler, build_opener
 
 import websocket
 
@@ -48,6 +48,28 @@ get_material.argtypes = [hwnd_t, W.DWORD, C.c_void_p, W.DWORD]
 get_material.restype = C.c_long
 
 
+def window_texts(pid):
+    lines = []
+    callback = C.WINFUNCTYPE(W.BOOL, hwnd_t, W.LPARAM)
+    @callback
+    def capture(hwnd, unused):
+        owner = W.DWORD()
+        u.GetWindowThreadProcessId(hwnd, C.byref(owner))
+        if owner.value == pid:
+            caption = C.create_unicode_buffer(2048)
+            u.GetWindowTextW(hwnd, caption, len(caption))
+            if caption.value:
+                lines.append(ascii(caption.value))
+        return True
+    @callback
+    def top(hwnd, unused):
+        capture(hwnd, 0)
+        u.EnumChildWindows(hwnd, capture, 0)
+        return True
+    u.EnumWindows(top, 0)
+    return lines
+
+
 def wait(fn, label, seconds=15):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -68,13 +90,17 @@ class Widget:
         self.proc = subprocess.Popen([exe], env=env)
         self.ws = None
         self.hwnd = None
+        targets = set()
+        opener = build_opener(ProxyHandler({}))
         try:
             def page():
                 if self.proc.poll() is not None:
                     raise RuntimeError("DeskCal exited before loading")
                 try:
-                    with urlopen(f"http://127.0.0.1:{port}/json/list", timeout=2) as response:
-                        return next((x for x in json.load(response)
+                    with opener.open(f"http://127.0.0.1:{port}/json/list", timeout=2) as response:
+                        pages = json.load(response)
+                        targets.update(x.get("url", "") for x in pages)
+                        return next((x for x in pages
                                      if x["url"].startswith("https://deskcal.invalid/index.html")), None)
                 except OSError:
                     return None
@@ -85,6 +111,8 @@ class Widget:
             foreground(self.hwnd)
             self.until("document.querySelectorAll('.cell').length===42")
         except BaseException:
+            print("Process", self.proc.poll(), "windows", window_texts(self.proc.pid),
+                  "CDP pages", targets, "profile files", os.listdir(profile), flush=True)
             self.close()
             raise
 
