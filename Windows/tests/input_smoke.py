@@ -100,10 +100,13 @@ class Widget:
             if os.environ.get("GITHUB_ACTIONS") == "true":
                 # The ARM runner can start with the Windows sign-in prompt
                 # covering other windows. Clear that runner-only obstruction.
-                welcome = find("Windows.UI.Core.CoreWindow", "Microsoft account")
-                if welcome:
-                    api("ShowWindowAsync", W.BOOL, hwnd_t, C.c_int)(welcome, 6)
-                    time.sleep(.6)
+                show_async = api("ShowWindowAsync", W.BOOL, hwnd_t, C.c_int)
+                for cls, caption in (("Windows.UI.Core.CoreWindow", "Microsoft account"),
+                                     ("UserOOBEWindowClass", None)):
+                    welcome = find(cls, caption)
+                    if welcome:
+                        show_async(welcome, 0)
+                time.sleep(.6)
             key(0x12, 0, 0, 0)
             key(0x12, 0, 2, 0)
             foreground(self.hwnd)
