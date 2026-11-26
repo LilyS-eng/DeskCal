@@ -237,7 +237,8 @@
   .cat-line input[type=color]{ width:18px; height:18px; border:none; border-radius:50%; padding:0; background:none; cursor:pointer; }
   .cat-line input[type=color]::-webkit-color-swatch-wrapper{ padding:0; }
   .cat-line input[type=color]::-webkit-color-swatch{ border-radius:50%; border:1px solid rgba(255,255,255,.3); }
-  .cat-line .nm{ flex:1; }
+  .cat-line .nm{ flex:1; min-width:0; border:0; background:transparent; color:inherit; font:inherit; }
+  .cat-line .nm:focus{ outline:1px solid var(--accent); }
   .cat-line .cnt{ color:rgba(255,255,255,.35); font-size:11px; }
   .cat-line .rm{ border:none; background:none; color:rgba(255,255,255,.35); cursor:pointer; font-size:12px; }
   .cat-line .rm:hover{ color:#ff7a6b; }
@@ -352,6 +353,43 @@
   body.widget-mode .widget-wrap{ zoom:100%; height:100%; }
   body.widget-mode .widget{ width:100%; min-height:100%; height:100%; }
 
+  /* Windows 外壳按设置调整原生客户区及 WebView2 缩放。 */
+  body.windows-widget{ font-family:"Segoe UI","Microsoft YaHei UI",sans-serif; }
+  .windows-widget .widget{
+    display:flex; flex-direction:column; color:var(--ink);
+    background:rgba(28,32,40,var(--alpha));
+  }
+  .windows-widget .widget.dark-text{ background:rgba(255,255,255,var(--alpha)); }
+  .windows-widget #view{ overflow:auto; min-height:0; }
+  .windows-widget .w-head{ flex:none; }
+  .windows-widget .grid-row,.windows-widget .week{ grid-template-columns:repeat(7,minmax(0,1fr)); }
+  body.widget-mode.windows-widget{ background:transparent; }
+  .sheet-mask,.panel{ visibility:hidden; }
+  .sheet-mask.open,.panel.open{ visibility:visible; }
+  #mask.open{ z-index:32; }
+  button.edit-todo{ background:transparent; border:0; color:inherit; cursor:pointer; font:inherit; font-size:11px; padding:4px; }
+  #legacy-import{ margin-top:8px; }
+  #legacy-import summary{ cursor:pointer; }
+  #legacy-list{ max-height:150px; overflow:auto; margin:6px 0; }
+  #legacy-list label{ display:flex; align-items:baseline; gap:6px; padding:4px 0; overflow-wrap:anywhere; }
+  .windows-widget #grip{ touch-action:none; }
+  .windows-widget .panel{
+    right:12px !important; max-width:calc(100vw - 24px);
+    max-height:calc(100vh - var(--panel-top,58px) - 8px); overflow:auto;
+  }
+  .windows-widget .sheet{ max-width:calc(100vw - 16px); max-height:calc(100vh - 16px); overflow:auto; }
+  .windows-widget .bak-head{ flex-wrap:wrap; }
+  .windows-widget .bak-row .t{ min-width:0; overflow-wrap:anywhere; }
+  @media(max-width:540px){
+    .windows-widget .widget{ padding:15px 12px; }
+    .windows-widget .w-head{ gap:5px; }
+    .windows-widget .w-title .mon{ font-size:18px; white-space:nowrap; }
+    .windows-widget .w-title .sub{ display:none; }
+    .windows-widget .seg button{ padding:4px 8px; }
+    .windows-widget .bak-row{ gap:5px; }
+    .windows-widget .bak-row .dt,.windows-widget .bak-row .st,.windows-widget .bak-row .cg{ width:auto; }
+  }
+
   /* 构建版本标识（URL ?v=N 决定显示什么，组件右下角小字） */
   .build-tag{
     position:fixed; right:6px; bottom:3px; z-index:5;
@@ -458,6 +496,12 @@
     <input type="file" id="imp-file" accept=".json,application/json" style="display:none">
   </div>
 
+  <details id="legacy-import" hidden>
+    <summary>从旧版选择待办</summary>
+    <div id="legacy-list"></div>
+    <button class="mini-btn" id="legacy-copy" disabled>迁移所选</button>
+  </details>
+
   <h4>清空</h4>
   <div class="exp-row">
     <button class="mini-btn danger" id="clear-all">清空全部待办</button>
@@ -501,9 +545,13 @@
 
 <div class="toast" id="toast" data-page-node-id="CPTX8yV3NBXPxc5vwHaIFF"></div>
 
+<div class="build-tag" id="build-tag">v?</div>
 <script>
 /* ================= 数据 ================= */
-const LS_KEY = 'deskcal-proto-v2';
+const windowsHost = location.hostname === 'deskcal.invalid' && new URLSearchParams(location.search).get('host') === 'windows'
+  ? window.chrome?.webview : null;
+const LEGACY_KEY = 'deskcal-proto-v2';
+const LS_KEY = windowsHost ? 'deskcal-personal-v1' : LEGACY_KEY;
 const defaultState = () => ({
   cats: [
     { id:'work',  name:'工作', color:'#7ec8ff' },
@@ -511,33 +559,33 @@ const defaultState = () => ({
     { id:'study', name:'学习', color:'#f2b84b' },
     { id:'health',name:'健康', color:'#ff9d9d' },
   ],
-  todos: [
-    { id:1, title:'整理会议记录',  date: today(), time:'10:00', cat:'work',  done:false },
-    { id:2, title:'回复未读邮件',  date: today(), time:'',      cat:'work',  done:true  },
-    { id:3, title:'夜跑 5 公里',   date: today(), time:'20:30', cat:'health',done:false },
-    { id:4, title:'《三体》第三章', date: today(), time:'',      cat:'study', done:false },
-    { id:5, title:'缴物业费',      date: addDays(2), time:'',      cat:'life',  done:false },
-    { id:6, title:'项目评审会',    date: addDays(2), time:'14:00', cat:'work',  done:false },
-    { id:7, title:'体检预约',      date: addDays(4), time:'09:00', cat:'health',done:false },
-    { id:8, title:'英语晨读',      date: addDays(1), time:'07:30', cat:'study', done:false },
-    { id:9, title:'团队晚宴',      date: addDays(5), time:'18:30', cat:'life',  done:false },
-    { id:10,title:'报销单提交',    date: addDays(-1),time:'',      cat:'work',  done:true  },
-    { id:11,title:'预约牙医',      date: addDays(3), time:'',      cat:'health',done:true  },
-  ],
+  todos: [],
   settings: { w:620, scale:100, alpha:30, blur:28, darkText:false, hideDone:false, showTasks:true },
   hidden: [],
 });
 function today(){ return fmt(new Date()); }
-function addDays(n){ const d=new Date(); d.setDate(d.getDate()+n); return fmt(d); }
 function fmt(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function parse(s){ const [y,m,dd]=s.split('-').map(Number); return new Date(y,m-1,dd); }
 
-let S;
-try { S = JSON.parse(localStorage.getItem(LS_KEY)) || defaultState(); } catch(e){ S = defaultState(); }
-if(!S.settings) S.settings = defaultState().settings;
+function readStoredState(key){
+  try { return JSON.parse(localStorage.getItem(key)); } catch { return null; }
+}
+const legacy = windowsHost ? readStoredState(LEGACY_KEY) : null;
+let S = readStoredState(LS_KEY);
+if(!S){
+  S = defaultState();
+  // Preserve presentation preferences. Only an explicit selection can import an old task.
+  if(legacy){
+    if(Array.isArray(legacy.cats)) S.cats = legacy.cats.slice();
+    if(Array.isArray(legacy.hidden)) S.hidden = legacy.hidden.slice();
+    Object.assign(S.settings, legacy.settings);
+  }
+}
+S.settings = Object.assign(defaultState().settings, S.settings);
+if(!Array.isArray(S.hidden)) S.hidden = [];
 // 一次性迁移：勾选完成的任务默认保持可见（之前默认隐藏，勾选后直接消失、像“勾不上”）
 // 用新标记名，确保上次只置标记未落盘的用户也能重新迁移；迁移时把设置写回 localStorage
-if(!localStorage.getItem('deskcal-mig-donevisible')){
+if(!windowsHost && !localStorage.getItem('deskcal-mig-donevisible')){
   S.settings.hideDone = false;
   try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); localStorage.setItem('deskcal-mig-donevisible','1'); }catch(e){}
 }
@@ -546,6 +594,7 @@ const save = () => { saveLocal(); schedulePush(); };
 const saveSet = () => { S.settings.updatedAt = Date.now(); save(); };   // 外观设置变更，带时间戳上传到服务端
 
 /* ================= 服务端同步 ================= */
+const syncEnabled = /^https?:$/.test(location.protocol) && !windowsHost;
 const API_URL = new URL('api/state', location.href).href;
 let syncState = 'idle', pushTimer = null, pushing = false, queued = false, srvVersion = 0;
 
@@ -590,12 +639,30 @@ async function push(){
     if(queued){ queued = false; push(); }
   }
 }
-function schedulePush(){ clearTimeout(pushTimer); pushTimer = setTimeout(()=>{ pushTimer = null; push(); }, 700); }
+function schedulePush(){ if(!syncEnabled) return; clearTimeout(pushTimer); pushTimer = setTimeout(()=>{ pushTimer = null; push(); }, 700); }
 
 let ui = { view:'month', cursor:new Date(), selected: today(), sheetCat: S.cats[0]?.id, bakFilter:'all' };
 
 /* 组件模式：网址加 ?widget=1 即只显示小组件本体，背景透明，便于嵌入桌面 */
 if(new URLSearchParams(location.search).has('widget')) document.body.classList.add('widget-mode');
+
+if(windowsHost){
+  document.body.classList.add('windows-widget');
+  const blur = document.getElementById('r-blur');
+  // DWM chooses the blur radius; keep the saved numeric value compatible with other hosts.
+  blur.type = 'checkbox';
+  blur.setAttribute('aria-label','系统毛玻璃');
+  blur.parentElement.title = '由 Windows 管理 Acrylic 毛玻璃强度';
+  // Observation only. These listeners never consume events or intercept focus.
+  let downs=0, clicks=0;
+  for(const type of ['pointerdown','click']){
+    document.addEventListener(type, e=>{
+      if(!e.isTrusted) return;
+      if(type==='pointerdown') downs++; else clicks++;
+    }, {capture:true, passive:true});
+  }
+  window.deskcalInputStatus=()=>[downs,clicks];
+}
 
 /* ================= 农历 / 节日 ================= */
 const LUNAR_DAYS = ['初一','初二','初三','初四','初五','初六','初七','初八','初九','初十',
@@ -604,7 +671,7 @@ const LUNAR_DAYS = ['初一','初二','初三','初四','初五','初六','初�
 const LUNAR_MONTHS = ['正月','二月','三月','四月','五月','六月','七月','八月','九月','十月','冬月','腊月'];
 const SOLAR_FEST = { '1-1':'元旦','5-1':'劳动节','10-1':'国庆节','9-10':'教师节','6-1':'儿童节','3-8':'妇女节','8-1':'建军节','12-25':'圣诞' };
 let lunarFmt;
-try { lunarFmt = new Intl.DateTimeFormat('zh-CN-u-ca-chinese', { month:'numeric', day:'numeric' }); } catch(e){ lunarFmt = null; }
+try { lunarFmt = new Intl.DateTimeFormat('en-u-ca-chinese', { month:'numeric', day:'numeric' }); } catch(e){ lunarFmt = null; }
 function lunarOf(date){
   if(!lunarFmt) return '';
   try{
@@ -614,7 +681,7 @@ function lunarOf(date){
     const m = parseInt(rawM.replace(/\D/g,''),10);
     const d = parseInt(rawD.replace(/\D/g,''),10);
     if(!m || !d) return '';
-    const leap = /闰/.test(rawM);
+    const leap = /bis|闰/.test(rawM);
     return d===1 ? (leap?'闰':'')+LUNAR_MONTHS[m-1] : LUNAR_DAYS[d-1];
   }catch(e){ return ''; }
 }
@@ -625,6 +692,7 @@ const $ = id => document.getElementById(id);
 const widget = $('widget'), wrap = $('wrap'), viewEl = $('view');
 const WEEK_CN = ['一','二','三','四','五','六','日'];
 
+const displayColor = value => /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value) ? value : '#8fa3bf';
 const catOf = id => S.cats.find(c=>c.id===id) || { name:'未分类', color:'#999' };
 function todosOn(dateStr){
   return S.todos.filter(t => t.date===dateStr && !S.hidden.includes(t.cat))
@@ -636,6 +704,7 @@ function shownOn(dateStr){
 }
 function hideDoneCount(dateStr){ return todosOn(dateStr).filter(t=>t.done).length; }
 
+let lastAppearance;
 function applySettings(){
   const st = S.settings;
   // 整体缩放跟随面板尺寸：面板越大字越大；再用“面板宽 / widget 宽”兜底，避免 zoom 后横向溢出
@@ -647,6 +716,10 @@ function applySettings(){
   widget.style.setProperty('--alpha', st.alpha/100);
   widget.style.setProperty('--blur', st.blur+'px');
   widget.classList.toggle('dark-text', st.darkText);
+  if(windowsHost){
+    const msg = 'appearance '+st.w+' '+st.scale+' '+st.blur+' '+(st.darkText?'dark':'light');
+    if(msg !== lastAppearance){ lastAppearance = msg; windowsHost.postMessage(msg); }
+  }
 }
 window.addEventListener('resize', applySettings);
 const effW = () => S.settings.w * S.settings.scale/100;
@@ -699,7 +772,7 @@ function renderMonth(){
       } else {
         const dots = shown.slice(0,3);
         if(dots.length)
-          html += '<span class="dots">'+dots.map(t=>`<i style="background:${catOf(t.cat).color}"></i>`).join('')+
+          html += '<span class="dots">'+dots.map(t=>`<i style="background:${displayColor(catOf(t.cat).color)}"></i>`).join('')+
                   (shown.length>3?`<span class="more">+${shown.length-3}</span>`:'')+'</span>';
       }
       html += '</div>';
@@ -718,10 +791,10 @@ function renderMonth(){
 function taskRow(t){
   const c = catOf(t.cat);
   const late = !t.done && t.date < today();
-  return `<div class="tk${t.done?' done':''}${late?' late':''}" data-id="${t.id}" title="${esc(t.title)}（${c.name}）${t.time?' '+t.time:''}">
-    <span class="ck" data-ck="${t.id}" title="标记完成">✓</span>
+  return `<div class="tk${t.done?' done':''}${late?' late':''}" data-id="${esc(t.id)}" title="${esc(t.title)}（${esc(c.name)}）${t.time?' '+esc(t.time):''}">
+    <span class="ck" data-ck="${esc(t.id)}" title="标记完成">✓</span>
     <span class="tx" style="color:${t.done?'var(--ink-3)':''}">${esc(t.title)}</span>
-    <i style="width:4px;height:4px;border-radius:50%;flex:none;margin-top:5px;background:${c.color}"></i>
+    <i style="width:4px;height:4px;border-radius:50%;flex:none;margin-top:5px;background:${displayColor(c.color)}"></i>
   </div>`;
 }
 function bindChecks(root){
@@ -730,7 +803,7 @@ function bindChecks(root){
   });
   // 整行点击也可勾选：命中区域更大，避免只点小圆圈点不中
   root.querySelectorAll('[data-id]').forEach(el=>{
-    el.addEventListener('click', e=>{ if(e.target.closest('[data-ck]')) return; e.stopPropagation(); toggleDone(el.dataset.id); });
+    el.addEventListener('click', e=>{ if(e.target.closest('[data-ck],button')) return; e.stopPropagation(); toggleDone(el.dataset.id); });
   });
 }
 
@@ -741,8 +814,8 @@ function renderWeek(){
     const d = addDays2(mon,i), key = fmt(d), td = key===today();
     html += `<div class="col${td?' today':''}"><div class="hd"><div class="wd">周${WEEK_CN[i]}</div><div class="dn">${d.getDate()}</div></div>`;
     for(const t of shownOn(key))
-      html += `<div class="chip${t.done?' done':''}" data-id="${t.id}" style="--c:${catOf(t.cat).color}" title="${esc(t.title)}">
-        <span class="ck" data-ck="${t.id}" title="标记完成">✓</span>${esc(t.title)}</div>`;
+      html += `<div class="chip${t.done?' done':''}" data-id="${esc(t.id)}" style="--c:${displayColor(catOf(t.cat).color)}" title="${esc(t.title)}">
+        <span class="ck" data-ck="${esc(t.id)}" title="标记完成">✓</span>${esc(t.title)}</div>`;
     html += '</div>';
   }
   viewEl.innerHTML = html + '</div>';
@@ -762,12 +835,13 @@ function renderDay(){
     html += '<div class="todo-list">';
     for(const t of shown){
       const c = catOf(t.cat);
-      html += `<div class="todo${t.done?' done':''}" data-id="${t.id}" style="--c:${c.color}">
-        <span class="ck" data-ck="${t.id}" title="标记完成">✓</span>
+      html += `<div class="todo${t.done?' done':''}" data-id="${esc(t.id)}" style="--c:${displayColor(c.color)}">
+        <span class="ck" data-ck="${esc(t.id)}" title="标记完成">✓</span>
         <span class="t">${esc(t.title)}</span>
-        ${t.time?`<span class="tm">${t.time}</span>`:''}
-        <span style="font-size:10px;color:${c.color};flex:none">${c.name}</span>
-        <button class="del" data-del="${t.id}" title="删除">✕</button>
+        ${t.time?`<span class="tm">${esc(t.time)}</span>`:''}
+        <span style="font-size:10px;color:${displayColor(c.color)};flex:none">${esc(c.name)}</span>
+        <button class="edit-todo" data-edit="${esc(t.id)}" aria-label="编辑待办">编辑</button>
+        <button class="del" data-del="${esc(t.id)}" title="删除">✕</button>
       </div>`;
     }
     html += '</div>';
@@ -775,9 +849,10 @@ function renderDay(){
   if(S.settings.hideDone && all.length>shown.length)
     html += `<div class="hint-line">已隐藏 ${all.length-shown.length} 条已完成任务 · 点 ☰ 后台查看</div>`;
   html += '<div class="legend">'+S.cats.map(c=>
-    `<label data-cat="${c.id}" style="${S.hidden.includes(c.id)?'opacity:.4':''}"><input type="checkbox" ${S.hidden.includes(c.id)?'':'checked'}><i style="background:${c.color}"></i>${esc(c.name)}</label>`).join('')+'</div>';
+    `<label data-cat="${esc(c.id)}" style="${S.hidden.includes(c.id)?'opacity:.4':''}"><input type="checkbox" ${S.hidden.includes(c.id)?'':'checked'}><i style="background:${displayColor(c.color)}"></i>${esc(c.name)}</label>`).join('')+'</div>';
   viewEl.innerHTML = html;
   bindChecks(viewEl);
+  bindEditors(viewEl);
   viewEl.querySelectorAll('[data-del]').forEach(el=>{
     el.addEventListener('click', e=>{ e.stopPropagation(); removeTodo(el.dataset.del); });
   });
@@ -797,7 +872,7 @@ function toggleDone(id){
   try{ save(); }catch(e){ try{console.error('[deskcal] save in toggleDone',e);}catch(_){ } }
   try{ if(bakMask && bakMask.classList && bakMask.classList.contains('open')) renderBackstage(); }catch(e){}
   try{ render(); }catch(e){ try{console.error('[deskcal] render in toggleDone',e);}catch(_){ } }
-  try{ toast(t.done ? '已标记完成，从视图隐藏' : '已恢复为未完成'); }catch(e){}
+  try{ toast(t.done ? (S.settings.hideDone ? '已完成，已从视图隐藏' : '已标记完成') : '已恢复为未完成'); }catch(e){}
   try{ console.log('[deskcal] toggleDone', id, 'done=', t.done); }catch(e){}
 }
 function removeTodo(id){ S.todos = S.todos.filter(x=>String(x.id)!==String(id)); save(); render(); toast('已删除'); }
@@ -817,32 +892,53 @@ document.querySelectorAll('#seg button').forEach(b=>{
 
 /* ================= 拖拽调节大小 ================= */
 const grip = $('grip');
-grip.addEventListener('mousedown', e=>{
+grip.addEventListener('pointerdown', e=>{
+  if(e.button !== 0) return;
   e.preventDefault();
-  const x0=e.clientX, y0=e.clientY, w0=S.settings.w, s0=S.settings.scale;
+  grip.setPointerCapture(e.pointerId);
+  const x0=e.screenX, y0=e.screenY, w0=S.settings.w, s0=S.settings.scale;
   const move = ev=>{
-    S.settings.w  = Math.min(860, Math.max(380, Math.round((w0 + (ev.clientX-x0)/(S.settings.scale/100))/10)*10));
-    S.settings.scale = Math.min(160, Math.max(70, Math.round((s0 + (ev.clientY-y0)*0.35)/5)*5));
+    S.settings.w = Math.min(860, Math.max(380, Math.round((w0 + (ev.screenX-x0)/(s0/100))/10)*10));
+    S.settings.scale = Math.min(160, Math.max(70, Math.round((s0 + (ev.screenY-y0)*0.35)/5)*5));
     applySettings();
     $('v-size').textContent = S.settings.w; $('r-size').value = S.settings.w;
     $('v-scale').textContent = S.settings.scale+'%'; $('r-scale').value = S.settings.scale;
   };
-  const up = ()=>{ document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); saveSet(); render(); };
-  document.addEventListener('mousemove', move);
-  document.addEventListener('mouseup', up);
+  const finish = ()=>{
+    grip.removeEventListener('pointermove', move);
+    saveSet(); render();
+  };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('lostpointercapture', finish, {once:true});
 });
-
-/* ================= 新增待办 ================= */
+/* ================= 新增与编辑 ================= */
 const mask = $('mask');
-$('add').onclick = ()=>{
-  $('f-title').value=''; $('f-time').value='';
-  $('f-date').value = (ui.view==='day') ? ui.selected : fmt(ui.cursor);
-  ui.sheetCat = S.cats[0]?.id; renderSheetCats();
-  mask.classList.add('open'); setTimeout(()=>$('f-title').focus(),120);
-};
-function closeSheet(){ mask.classList.remove('open'); }
+let editingId = null;
+function openEditor(task){
+  editingId = task ? String(task.id) : null;
+  mask.querySelector('h3').textContent = task ? '编辑待办' : '新增待办';
+  $('f-ok').textContent = task ? '保存' : '添加';
+  $('f-title').value = task?.title || '';
+  $('f-time').value = task?.time || '';
+  $('f-date').value = task?.date || (ui.view==='day' ? ui.selected : fmt(ui.cursor));
+  ui.sheetCat = task ? task.cat : S.cats[0]?.id;
+  renderSheetCats();
+  mask.classList.add('open');
+  $('f-title').focus();
+}
+$('add').onclick = ()=>openEditor(null);
+function bindEditors(root){
+  root.querySelectorAll('[data-edit]').forEach(button=>{
+    button.onclick = e=>{
+      e.stopPropagation();
+      const task = S.todos.find(t=>String(t.id)===button.dataset.edit);
+      if(task) openEditor(task);
+    };
+  });
+}
+function closeSheet(){ mask.classList.remove('open'); editingId=null; }
 function renderSheetCats(){
-  $('f-cats').innerHTML = S.cats.map(c=>`<button data-id="${c.id}" class="${c.id===ui.sheetCat?'on':''}"><i style="background:${c.color}"></i>${esc(c.name)}</button>`).join('');
+  $('f-cats').innerHTML = S.cats.map(c=>`<button data-id="${esc(c.id)}" class="${c.id===ui.sheetCat?'on':''}"><i style="background:${displayColor(c.color)}"></i>${esc(c.name)}</button>`).join('');
   $('f-cats').querySelectorAll('button').forEach(b=> b.onclick = ()=>{ ui.sheetCat=b.dataset.id; renderSheetCats(); });
 }
 $('f-cancel').onclick = closeSheet;
@@ -851,10 +947,20 @@ $('f-ok').onclick = ()=>{
   const title = $('f-title').value.trim();
   if(!title){ $('f-title').focus(); return; }
   const date = $('f-date').value || today();
-  S.todos.push({ id:Date.now(), title, date, time:$('f-time').value, cat:ui.sheetCat, done:false, updatedAt:Date.now() });
+  const edit = editingId !== null;
+  const fields = {title, date, time:$('f-time').value, cat:ui.sheetCat, updatedAt:Date.now()};
+  if(edit){
+    const task = S.todos.find(t=>String(t.id)===editingId);
+    if(!task){ closeSheet(); toast('这条待办已删除'); return; }
+    Object.assign(task, fields);
+  } else {
+    S.todos.push({id:Date.now(), done:false, ...fields});
+  }
   save(); closeSheet();
   ui.selected = date; ui.cursor = parse(date);
-  render(); toast('已添加');
+  render();
+  if(bakMask.classList.contains('open')) renderBackstage();
+  toast(edit ? '已保存' : '已添加');
 };
 
 /* ================= 后台 ================= */
@@ -883,19 +989,21 @@ function renderBackstage(){
     if(t.date!==lastDate){
       lastDate = t.date;
       const d = parse(t.date);
-      html += `<div class="bak-date-sep">${t.date} · 星期${'日一二三四五六'[d.getDay()]}</div>`;
+      html += `<div class="bak-date-sep">${esc(t.date)} · 星期${'日一二三四五六'[d.getDay()]}</div>`;
     }
     const c = catOf(t.cat);
     html += `<div class="bak-row${t.done?' done':''}">
-      <span class="ck" data-bck="${t.id}" title="切换完成状态">✓</span>
+      <span class="ck" data-bck="${esc(t.id)}" title="切换完成状态">✓</span>
       <span class="t">${esc(t.title)}</span>
-      <span class="cg"><i style="background:${c.color}"></i>${esc(c.name)}</span>
-      <span class="dt">${t.time || '全天'}</span>
+      <span class="cg"><i style="background:${displayColor(c.color)}"></i>${esc(c.name)}</span>
+      <span class="dt">${esc(t.time || '全天')}</span>
       <span class="st">${t.done?'已完成':'未完成'}</span>
-      <button class="del" data-bdel="${t.id}" title="删除">✕</button>
+      <button class="edit-todo" data-edit="${esc(t.id)}" aria-label="编辑待办">编辑</button>
+      <button class="del" data-bdel="${esc(t.id)}" title="删除">✕</button>
     </div>`;
   }
   $('bak-list').innerHTML = html;
+  bindEditors($('bak-list'));
   $('bak-list').querySelectorAll('[data-bck]').forEach(el=>{
     el.addEventListener('click', ()=>{ toggleDone(el.dataset.bck); });
   });
@@ -913,6 +1021,7 @@ $('gear').onclick = e=>{
   e.stopPropagation();
   const r = $('gear').getBoundingClientRect();
   panel.style.top = (r.bottom+10)+'px';
+  panel.style.setProperty('--panel-top', panel.style.top);
   panel.style.right = Math.max(12, innerWidth - r.right)+'px';
   panel.classList.toggle('open');
   if(panel.classList.contains('open')) renderSettings();
@@ -927,7 +1036,11 @@ function renderSettings(){
   $('r-size').value = st.w;     $('v-size').textContent = st.w;
   $('r-scale').value = st.scale; $('v-scale').textContent = st.scale+'%';
   $('r-alpha').value = st.alpha; $('v-alpha').textContent = st.alpha+'%';
-  $('r-blur').value = st.blur;   $('v-blur').textContent = st.blur+'px';
+  if(windowsHost){
+    $('r-blur').checked = st.blur > 0; $('v-blur').textContent = st.blur > 0 ? '系统' : '关';
+  } else {
+    $('r-blur').value = st.blur; $('v-blur').textContent = st.blur+'px';
+  }
   $('t-light').style.opacity = st.darkText ? .5 : 1;
   $('t-dark').style.opacity = st.darkText ? 1 : .5;
   $('s-hide').checked = st.hideDone;
@@ -937,7 +1050,11 @@ function renderSettings(){
 $('r-size').oninput = e=>{ S.settings.w=+e.target.value; $('v-size').textContent=S.settings.w; saveSet(); applySettings(); render(); };
 $('r-scale').oninput = e=>{ S.settings.scale=+e.target.value; $('v-scale').textContent=S.settings.scale+'%'; saveSet(); applySettings(); render(); };
 $('r-alpha').oninput = e=>{ S.settings.alpha=+e.target.value; $('v-alpha').textContent=S.settings.alpha+'%'; saveSet(); applySettings(); };
-$('r-blur').oninput = e=>{ S.settings.blur=+e.target.value; $('v-blur').textContent=S.settings.blur+'px'; saveSet(); applySettings(); };
+$('r-blur').oninput = e=>{
+  S.settings.blur = windowsHost ? (e.target.checked ? 28 : 0) : +e.target.value;
+  $('v-blur').textContent = windowsHost ? (e.target.checked ? '系统' : '关') : S.settings.blur+'px';
+  saveSet(); applySettings();
+};
 $('t-light').onclick = ()=>{ S.settings.darkText=false; saveSet(); applySettings(); renderSettings(); };
 $('t-dark').onclick = ()=>{ S.settings.darkText=true; saveSet(); applySettings(); renderSettings(); };
 $('s-hide').onchange = e=>{ S.settings.hideDone=e.target.checked; saveSet(); render(); };
@@ -946,13 +1063,21 @@ $('s-task').onchange = e=>{ S.settings.showTasks=e.target.checked; saveSet(); re
 function renderCatList(){
   $('cat-list').innerHTML = S.cats.map(c=>{
     const n = S.todos.filter(t=>t.cat===c.id).length;
-    return `<div class="cat-line" data-id="${c.id}">
-      <input type="color" value="${c.color}" title="颜色">
-      <span class="nm">${esc(c.name)}</span><span class="cnt">${n} 项</span>
+    return `<div class="cat-line" data-id="${esc(c.id)}">
+      <input type="color" value="${displayColor(c.color)}" title="颜色">
+      <input class="nm" aria-label="分类名称" title="修改分类名称" maxlength="20" value="${esc(c.name)}"><span class="cnt">${n} 项</span>
       <button class="rm" title="删除分类">✕</button></div>`;
   }).join('');
   $('cat-list').querySelectorAll('.cat-line').forEach(el=>{
     const id = el.dataset.id;
+    const nameField = el.querySelector('.nm');
+    nameField.onchange = ()=>{
+      const c = S.cats.find(c=>String(c.id)===id);
+      c.name = nameField.value.trim() || c.name;
+      nameField.value = c.name; c.updatedAt = Date.now();
+      save(); render(); renderSheetCats();
+    };
+    nameField.onkeydown = e=>{ if(e.key==='Enter' && !e.isComposing) nameField.blur(); };
     el.querySelector('input[type=color]').oninput = e=>{
       const c = S.cats.find(c=>c.id===id); c.color = e.target.value; c.updatedAt = Date.now();
       save(); render(); renderSheetCats();
@@ -1061,6 +1186,37 @@ $('imp-file').onchange = e => {
   reader.readAsText(file);
 };
 
+/* ================= Windows 旧版选择性迁移 ================= */
+function showLegacyChoices(){
+  const migrated = new Set(S.migratedLegacyIds || []);
+  const available = (legacy?.todos || []).filter(t=>t && t.id != null && !migrated.has(String(t.id)));
+  $('legacy-import').hidden = !available.length;
+  $('legacy-list').innerHTML = available.map((t,i)=>
+    `<label><input type="checkbox" value="${i}"><span>${esc(t.date || '')} ${esc(t.time || '')} · ${esc(t.title)}</span></label>`).join('');
+  const copy = $('legacy-copy');
+  copy.disabled = true;
+  $('legacy-list').onchange = ()=>{ copy.disabled = !$('legacy-list').querySelector(':checked'); };
+  copy.onclick = ()=>{
+    const selected = [...$('legacy-list').querySelectorAll(':checked')].map(el=>available[Number(el.value)]);
+    const todos = S.todos.slice(), cats = S.cats.slice();
+    const ids = new Set(todos.map(t=>String(t.id)));
+    for(const t of selected){
+      const category = legacy.cats?.find(c=>c.id===t.cat);
+      if(category && !cats.some(c=>c.id===category.id)) cats.push({...category});
+      const id = ids.has(String(t.id)) ? crypto.randomUUID() : t.id;
+      todos.push({...t, id});
+      ids.add(String(id));
+    }
+    const next = {...S, todos, cats, migratedLegacyIds:[...migrated, ...selected.map(t=>String(t.id))]};
+    try { localStorage.setItem(LS_KEY, JSON.stringify(next)); }
+    catch { toast('保存失败，所选待办尚未迁移'); return; }
+    S = next;
+    showLegacyChoices(); renderSettings(); render();
+    toast(`已迁移 ${selected.length} 条待办`);
+  };
+}
+if(Array.isArray(legacy?.todos)) showLegacyChoices();
+
 /* ================= 清空 ================= */
 // 不用 window.confirm：WKWebView 没有设 WKUIDelegate 时，confirm 会被静默忽略、
 // 恒定返回 false。在浏览器里试是好的，装进 App 就变成「点了没反应」。
@@ -1101,20 +1257,22 @@ function toast(msg){
 
 /* ================= 启动 ================= */
 render();
-setSync('ing');
-pull();                                                  // 启动时从服务端拉取
-setInterval(()=>{ if(syncState !== 'ing') pull(); }, 60000);   // 每分钟核对一次
-document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) pull(); });
-window.addEventListener('online', ()=>{ setSync('ing'); push(); });
+if(syncEnabled){
+  setSync('ing'); pull();
+  setInterval(()=>{ if(syncState !== 'ing') pull(); }, 60000);
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) pull(); });
+  window.addEventListener('online', ()=>{ setSync('ing'); push(); });
+} else {
+  $('sync').title = '本地模式 · 数据保存在这台电脑';
+}
 
 // 构建版本号（URL ?v=N）：右下角小字显示，确认加载的是哪一版
 (function(){
   const v = new URLSearchParams(location.search).get('v') || '?';
   const el = document.getElementById('build-tag');
-  if(el) el.textContent = 'v' + v;
+  if(el) el.textContent = windowsHost ? 'DeskCal 1.0.3' : 'v' + v;
   try{ console.log('[deskcal] build v' + v + ' loaded @ ' + new Date().toISOString()); }catch(e){}
 })();
 </script>
-<div class="build-tag" id="build-tag">v?</div>
 </body>
 </html>

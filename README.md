@@ -1,12 +1,45 @@
 # DeskCal
 
-把待办日历贴在 macOS 桌面上的小组件。它在壁纸之上、普通应用窗口之下，安静地待在那儿，不挡工作；露出来的区域可以直接点击勾选。
+适用于 Windows 11 和 macOS 的日历与待办小组件。Windows 1.0.3 使用独立无边框挂件，macOS 版显示在桌面层。
 
-原生外壳用 Swift 的 `NSPanel` + `WKWebView`，界面是单文件 `index.html`。所以视觉和交互全在一个网页里，想改什么改什么。
+macOS 外壳用 Swift 的 `NSPanel` + `WKWebView`，Windows 外壳用 WPF + WebView2，两者共用单文件 `index.html`。所以视觉和交互全在一个网页里，想改什么改什么。
 
 数据存在本机 `localStorage`，不需要后端，不联网，没有账号。开箱即用。
 
 ![月视图](docs/screenshot-month.jpg)
+
+## Windows 11 移植版
+
+Windows 1.0.3 沿用已通过真机输入测试的 1.0.2 标准 WPF WebView2 子窗口。Windows 11 支持时，DWM 在窗口背后绘制 Desktop Acrylic，网页以原卡片透明度绘制。系统管理模糊强度，设置中可以开关毛玻璃。关闭时或系统 API 不支持时使用兼容底色。窗口在系统关闭透明效果或某些远程会话中可能呈现纯色。
+
+挂件首次打开在主屏工作区右下角，拖顶部短横条移动。它使用正常可激活的顶层工具窗口，隐藏任务栏与 Alt+Tab 入口，保留通知区域的日历图标。其他应用获得焦点后可覆盖它；点击挂件时它仍能正常获得焦点。没有 WorkerW / Progman 嵌入、鼠标穿透、强制置底或始终置顶。
+
+### 打开程序
+
+先从托盘退出旧版，将 x64 压缩包完整解压到新文件夹，再双击 `DeskCal.exe`。右下角显示「DeskCal 1.0.3」。托盘菜单可显示窗口、刷新、查看输入诊断或退出。运行需要 .NET Framework 4.8 或更高版本和 [Microsoft Edge WebView2 Evergreen 运行时](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)。
+
+### 空白日历与旧版迁移
+
+新用户首次启动时待办为零，1.0.2 用户原有待办与设置直接沿用。更早版本中的记录仅在「设置 → 从旧版选择待办」勾选并迁移后才加入个人清单。数据位于 `%LOCALAPPDATA%\DeskCal\WebView2`，升级无需删除此目录。
+
+### 自行构建
+
+在仓库根目录、装有 .NET SDK 的终端运行：
+
+```powershell
+dotnet build Windows/DeskCal.csproj -c Release
+.\Windows\bin\Release\net48\DeskCal.exe
+```
+
+首次构建会从 NuGet 还原依赖。分发时复制整个 `Windows/bin/Release/net48/` 目录，包括 `web`、`runtimes`、DLL 和许可证。
+
+### 操作及输入排查
+
+- 左右箭头翻页，点月视图的日期进入当天；用日、周、月按钮切换视图。
+- 点「＋」创建待办，点圆圈勾选或恢复。在日视图或「☰ 全部待办」里点「编辑」，可改内容、日期、时间和分类。
+- 点击设置可调整宽度、缩放、卡片透明度，或开关系统毛玻璃。使用窗口顶部短横条移动，从系统托盘找回窗口。
+- 若遇到输入问题，点几次日期和按钮，再从托盘选择「查看输入诊断」。计数表示本次加载后网页收到的按下与点击次数。
+- Windows 原生输入回归脚本位于 `Windows/tests/input_smoke.py`。在已解锁的专用 Windows 测试桌面，退出其他 DeskCal 实例，安装 Python 3.10+ 后，执行 `python Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe`。脚本以临时 WebView2 配置运行，通过 Windows 鼠标和键盘操作实际控件，覆盖焦点切换、滚动和重启持久化。独立测试程序在临时目录运行发布版入口并读取页面状态。
 
 ## 特性
 
@@ -19,7 +52,7 @@
 7. **完全本地**，断网全功能可用，不产生任何网络请求。
 8. **不占 Dock**，以 `.accessory` 模式运行，只在菜单栏留一个日历图标。
 
-## 快速开始
+## macOS 快速开始
 
 需要 macOS 12 或更高，以及 Xcode 命令行工具。
 
@@ -109,6 +142,7 @@ WKWebView 缓存很激进。外壳加载时在 URL 上带 `_ts` 时间戳并强�
 ```
 DeskCal/
 ├── index.html                  # 组件界面，全部视觉与交互都在这里
+├── Windows/                    # Windows 11 外壳和 .NET 构建项目
 ├── DeskCalApp/
 │   ├── App.swift               # 原生外壳：NSPanel + WKWebView
 │   └── build_app.sh            # 编译 + 打包 + 自签
