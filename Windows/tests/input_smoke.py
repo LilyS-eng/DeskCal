@@ -339,11 +339,14 @@ def test_reminders(exe, profile):
                f"document.querySelector('#f-time').value='{due:%H:%M}'")
         app.click("#f-ok")
 
-    def expect_popup(due, count):
+    def expect_popup(app, due, count):
         assert not find(None, caption), "Reminder visible before its scheduled minute"
         remaining = max(0, (due - datetime.now()).total_seconds())
         hwnd = wait(lambda: find(None, caption), caption, remaining + 16)
-        wait(lambda: receipts.exists() and len(json.loads(receipts.read_text())) == count, "persisted receipt")
+        # The HWND exists before the UI thread finishes atomically replacing
+        # the receipt file. Wait for that dispatcher work before opening it.
+        assert app.js("true")
+        assert len(json.loads(receipts.read_text())) == count
         assert post(hwnd, 0x10, 0, 0)
         wait(lambda: not find(None, caption), "reminder dismissed")
 
@@ -361,7 +364,7 @@ def test_reminders(exe, profile):
     try:
         app.js("tray:left")
         wait(lambda: not visible(app.hwnd), "hidden before scheduled time")
-        expect_popup(due, 1)
+        expect_popup(app, due, 1)
         assert not visible(app.hwnd), "Reminder reopened the widget"
     finally:
         app.close(verify=True)
@@ -374,7 +377,7 @@ def test_reminders(exe, profile):
         app.click(".bak-row [data-edit]")
         new_due = due_after(1 if datetime.now().second < 50 else 2)
         set_time(app, new_due)
-        expect_popup(new_due, 2)
+        expect_popup(app, new_due, 2)
         print("PASS: hidden reminder after restart, persisted deduplication, edited time fires again.", flush=True)
     finally:
         app.close(verify=True)
