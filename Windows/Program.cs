@@ -148,11 +148,12 @@ namespace DeskCal
             Size initial = default;
             Vector scale = default;
             grip.MouseLeftButtonDown += (_, e) => {
-                if (!grip.CaptureMouse()) return;
                 start = PointToScreen(e.GetPosition(this));
                 initial = RenderSize;
                 var dpi = VisualTreeHelper.GetDpi(this);
                 scale = new Vector(dpi.DpiScaleX, dpi.DpiScaleY);
+                // Capture can synchronously dispatch MouseMove. Set the origin first.
+                if (!grip.CaptureMouse()) return;
                 trace.Record("WPF grip down");
                 e.Handled = true;
             };

@@ -73,11 +73,12 @@ try:
         u.SetCursorPos(r.right-18, r.bottom-18)
         u.mouse_event(2, 0, 0, 0, 0)
         wait(lambda: records().count("WPF grip down") > cycle)
+        assert bounds(h).right == r.right and bounds(h).bottom == r.bottom
         for delta in range(4, 24, 4):
             u.SetCursorPos(r.right-18-delta, r.bottom-18-delta)
             time.sleep(.06)
         u.mouse_event(4, 0, 0, 0, 0)
-        wait(lambda: bounds(h).right < r.right-5)
+        wait(lambda: bounds(h).right == r.right-20 and bounds(h).bottom == r.bottom-20)
         r = bounds(h)
         click(r.right-18, r.top+14)
         wait(lambda: not u.IsWindowVisible(h))
