@@ -956,6 +956,7 @@ const grip = $('grip');
 grip.addEventListener('pointerdown', e=>{
   if(e.button !== 0) return;
   e.preventDefault();
+  if(windowsHost) window.chrome.webview.postMessage("diag grip down");
   grip.setPointerCapture(e.pointerId);
   if(windowsHost){
     const [w0,h0] = initialWindowSize(S.settings), x0=e.screenX, y0=e.screenY;
@@ -968,6 +969,7 @@ grip.addEventListener('pointerdown', e=>{
     };
     grip.addEventListener('pointermove',move);
     grip.addEventListener('lostpointercapture',()=>{
+      window.chrome.webview.postMessage('diag grip lostcapture');
       grip.removeEventListener('pointermove',move);
       if(frame) cancelAnimationFrame(frame);
       if(w!==w0 || h!==h0) requestWindowSize(w,h,true);

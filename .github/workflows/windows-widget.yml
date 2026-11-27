@@ -1,7 +1,7 @@
 name: Windows widget input
 on:
   push:
-    branches: [windows-1.0.6]
+    branches: [diagnostic/acrylic-lifecycle]
   workflow_dispatch:
 permissions:
   contents: read
@@ -37,10 +37,18 @@ jobs:
           } else {
             python Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe
           }
+      - name: Verify lifecycle log
+        shell: pwsh
+        run: |
+          $logs = Get-ChildItem "$env:LOCALAPPDATA/DeskCal/logs/acrylic-diagnostic-*.log"
+          $text = ($logs | Get-Content) -join "`n"
+          foreach ($key in @('SourceInitialized','ContentRendered','DwmExtend requested=', 'diag grip down','edge restore requested','after Show','controller=', ' raster=', 'Closed')) {
+            if (!$text.Contains($key)) { throw "Missing evidence $key" }
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: DeskCal-1.0.6-x64-${{ matrix.os }}
+          name: DeskCal-Diagnostic-x64-${{ matrix.os }}
           path: Windows/bin/Release/net48/
       - uses: actions/upload-artifact@v4
         if: always()

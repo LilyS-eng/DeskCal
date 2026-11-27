@@ -49,6 +49,7 @@ namespace DeskCal
         private ReminderScheduler reminders;
         private bool firstAppearance = true;
         private WindowAppearance appearance;
+        private readonly AcrylicTrace trace;
         private const int GripHeight = 30;
         private const int CloseWidth = 34;
         private const int CloseHeight = 26;
@@ -106,8 +107,9 @@ namespace DeskCal
             layout.Children.Add(web);
             Content = layout;
 
-            SourceInitialized += (_, __) => appearance = new WindowAppearance(this);
-            placement = new WidgetPlacement(this, header, CloseButtonTemplate(), HideToEdge, Recover);
+            trace = new AcrylicTrace(this, web);
+            SourceInitialized += (_, __) => appearance = new WindowAppearance(this, trace);
+            placement = new WidgetPlacement(this, header, CloseButtonTemplate(), HideToEdge, () => { trace.Record("edge restore requested"); Recover(); });
             Loaded += Start;
             Closing += (_, e) => {
                 if (closing || tray == null) return;
@@ -124,6 +126,7 @@ namespace DeskCal
                 reminders?.Dispose();
                 tray?.Dispose();
                 menu.Dispose();
+                trace.Dispose();
                 web.Dispose();
             };
         }
@@ -157,7 +160,9 @@ namespace DeskCal
                     throw new FileNotFoundException("缺少 web\\index.html，请完整解压程序包。");
                 var env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(dataDir, "WebView2"));
                 if (closing) return;
+                trace.Record("WebView init begin runtime=" + env.BrowserVersionString);
                 await web.EnsureCoreWebView2Async(env);
+                trace.Record("WebView init complete");
                 if (closing) return;
                 var core = web.CoreWebView2;
                 reminders = new ReminderScheduler(Dispatcher, env.UserDataFolder);
@@ -175,6 +180,7 @@ namespace DeskCal
                 core.WebMessageReceived += Receive;
                 core.DownloadStarting += SaveDownload;
                 core.NavigationCompleted += (_, e) => {
+                    trace.Record("NavigationCompleted success=" + e.IsSuccess);
                     if (e.IsSuccess)
                     {
                         pageReady = true;
@@ -202,12 +208,13 @@ namespace DeskCal
                     }
                     catch (Exception e) { if (!closing) MessageBox.Show(e.Message, Title); }
                 });
-                var show = new Forms.ToolStripMenuItem("显示 DeskCal", null, (_, __) => Recover());
+                var show = new Forms.ToolStripMenuItem("显示 DeskCal", null, (_, __) => { trace.Record("tray menu show"); Recover(); });
                 var hide = new Forms.ToolStripMenuItem("隐藏 DeskCal", null, (_, __) => HideToTray());
                 menu.Items.Insert(0, show);
                 menu.Items.Insert(1, hide);
                 menu.Items.Insert(2, new Forms.ToolStripSeparator());
                 menu.Items.Add(new Forms.ToolStripSeparator());
+                trace.Menu(menu);
                 menu.Items.Add("退出 DeskCal", null, (_, __) => Exit());
                 menu.Opening += (_, __) => {
                     show.Enabled = !placement.MainShown;
@@ -247,20 +254,24 @@ namespace DeskCal
 
         private void ToggleVisibility()
         {
+            trace.Record("tray toggle");
             if (placement.MainShown) HideToTray();
             else Recover();
         }
 
         private void HideToTray()
         {
+            trace.Record("tray hide begin");
             placement.HideToTray();
             ConcealMain();
         }
 
         private void HideToEdge()
         {
+            trace.Record("edge hide begin");
             ConcealMain();
             placement.HideToEdge();
+            trace.Record("edge hide end");
         }
 
         private void ConcealMain()
@@ -268,7 +279,9 @@ namespace DeskCal
             CancelReveal();
             needsReveal = true;
             appearance.Conceal();
+            trace.Record("before Hide");
             Hide();
+            trace.Record("after Hide");
         }
 
         private void QueueReveal()
@@ -290,10 +303,12 @@ namespace DeskCal
         private void RevealAfterFrame(object sender, EventArgs args)
         {
             CompositionTarget.Rendering -= RevealAfterFrame;
+            trace.Record("CompositionTarget.Rendering reveal");
             pendingReveal = Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() => {
                 pendingReveal = null;
                 awaitingFrame = false;
                 if (!IsVisible || closing) return;
+                trace.Record("ContextIdle before Present");
                 appearance.Present();
                 needsReveal = false;
                 if (focusOnReveal)
@@ -307,12 +322,15 @@ namespace DeskCal
 
         private void Recover()
         {
+            trace.Record("recover before PrepareShow");
             placement.PrepareShow();
             WindowState = WindowState.Normal;
             if (!IsVisible)
             {
                 focusOnReveal = true;
+                trace.Record("before Show");
                 Show();
+                trace.Record("after Show");
                 QueueReveal();
                 return;
             }
@@ -326,6 +344,11 @@ namespace DeskCal
             string message;
             try { message = e.TryGetWebMessageAsString(); }
             catch (ArgumentException) { return; }
+            if (message == "diag grip down" || message == "diag grip lostcapture")
+            {
+                trace.Record(message);
+                return;
+            }
             const string schedule = "reminders ";
             if (message != null && message.StartsWith(schedule, StringComparison.Ordinal))
             {
@@ -336,6 +359,7 @@ namespace DeskCal
             if (p.Length == 4 && p[0] == "size" && int.TryParse(p[1], out int requestedWidth) &&
                 int.TryParse(p[2], out int requestedHeight) && (p[3] == "preview" || p[3] == "save"))
             {
+                trace.Record("page size request " + requestedWidth + "x" + requestedHeight + " " + p[3]);
                 placement.Resize(requestedWidth, requestedHeight);
                 if (p[3] == "save") SendSize("saved");
                 return;
