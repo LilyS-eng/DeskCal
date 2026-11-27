@@ -1,14 +1,10 @@
 using System;
-using System.IO;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
-using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.Wpf;
-using Microsoft.Win32;
 using Forms = System.Windows.Forms;
 
 namespace DeskCal
@@ -33,10 +29,7 @@ namespace DeskCal
 
     internal sealed class Widget : Window
     {
-        private const string Host = "deskcal.invalid";
-        private const string Page = "https://" + Host + "/index.html?widget=1&host=windows&build=1.0.6";
-        private readonly string dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DeskCal");
-        private readonly WebView2 web = new WebView2();
+        private readonly Grid surface = new Grid { Background = Brushes.Transparent, Focusable = true };
         private readonly Forms.ContextMenuStrip menu = new Forms.ContextMenuStrip();
         private Forms.NotifyIcon tray;
         private bool closing;
@@ -44,10 +37,8 @@ namespace DeskCal
         private bool awaitingFrame;
         private bool needsReveal = true;
         private bool focusOnReveal;
-        private bool pageReady;
+        private bool surfaceReady;
         private readonly WidgetPlacement placement;
-        private ReminderScheduler reminders;
-        private bool firstAppearance = true;
         private WindowAppearance appearance;
         private readonly AcrylicTrace trace;
         private const int GripHeight = 30;
@@ -56,7 +47,7 @@ namespace DeskCal
 
         public Widget()
         {
-            Title = "DeskCal 1.0.6";
+            Title = "DeskCal Acrylic B (WPF only)";
             Width = 620;
             Height = 520 + GripHeight;
             WindowStyle = WindowStyle.None;
@@ -70,11 +61,6 @@ namespace DeskCal
             Topmost = false;
             AllowsTransparency = false;
 
-            web.DefaultBackgroundColor = System.Drawing.Color.FromArgb(0, 0, 0, 0);
-            web.AllowExternalDrop = false;
-
-            // A separate layout row is the only native drag target. It shares
-            // no pixels or mouse handlers with the windowed browser control.
             var handle = new Border {
                 Height = GripHeight, Background = Brushes.Transparent,
                 Cursor = Cursors.SizeAll, ToolTip = "拖动窗口",
@@ -104,12 +90,13 @@ namespace DeskCal
             var layout = new DockPanel();
             DockPanel.SetDock(header, Dock.Top);
             layout.Children.Add(header);
-            layout.Children.Add(web);
+            layout.Children.Add(surface);
             Content = layout;
 
-            trace = new AcrylicTrace(this, web);
+            trace = new AcrylicTrace(this, surface);
             SourceInitialized += (_, __) => appearance = new WindowAppearance(this, trace);
             placement = new WidgetPlacement(this, header, CloseButtonTemplate(), HideToEdge, () => { trace.Record("edge restore requested"); Recover(); });
+            AddResizeGrip();
             Loaded += Start;
             Closing += (_, e) => {
                 if (closing || tray == null) return;
@@ -123,11 +110,9 @@ namespace DeskCal
                 CancelReveal();
                 placement.Dispose();
                 Application.Current.SessionEnding -= EndSession;
-                reminders?.Dispose();
                 tray?.Dispose();
                 menu.Dispose();
                 trace.Dispose();
-                web.Dispose();
             };
         }
 
@@ -149,95 +134,67 @@ namespace DeskCal
             return template;
         }
 
-        private async void Start(object sender, RoutedEventArgs args)
+        private void AddResizeGrip()
+        {
+            var grip = new Border {
+                Width = 28, Height = 28, Margin = new Thickness(0, 0, 6, 6),
+                Cursor = Cursors.SizeNWSE, Background = Brushes.Transparent,
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
+                Child = new TextBlock { Text = "◢", FontSize = 18, Foreground = Brushes.LightSlateGray,
+                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
+            };
+            surface.Children.Add(grip);
+            Point start = default;
+            Size initial = default;
+            Vector scale = default;
+            grip.MouseLeftButtonDown += (_, e) => {
+                if (!grip.CaptureMouse()) return;
+                start = PointToScreen(e.GetPosition(this));
+                initial = RenderSize;
+                var dpi = VisualTreeHelper.GetDpi(this);
+                scale = new Vector(dpi.DpiScaleX, dpi.DpiScaleY);
+                trace.Record("WPF grip down");
+                e.Handled = true;
+            };
+            grip.MouseMove += (_, e) => {
+                if (!grip.IsMouseCaptured || e.LeftButton != MouseButtonState.Pressed) return;
+                var delta = PointToScreen(e.GetPosition(this)) - start;
+                placement.Resize((int)Math.Round(initial.Width + delta.X / scale.X),
+                    (int)Math.Round(initial.Height + delta.Y / scale.Y));
+            };
+            grip.MouseLeftButtonUp += (_, e) => {
+                if (grip.IsMouseCaptured) grip.ReleaseMouseCapture();
+            };
+            grip.LostMouseCapture += (_, __) => trace.Record("WPF grip lostcapture");
+        }
+
+        private void Start(object sender, RoutedEventArgs args)
         {
             Loaded -= Start;
-            try
-            {
-                Directory.CreateDirectory(dataDir);
-                string assets = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "web");
-                if (!File.Exists(Path.Combine(assets, "index.html")))
-                    throw new FileNotFoundException("缺少 web\\index.html，请完整解压程序包。");
-                var env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(dataDir, "WebView2"));
-                if (closing) return;
-                trace.Record("WebView init begin runtime=" + env.BrowserVersionString);
-                await web.EnsureCoreWebView2Async(env);
-                trace.Record("WebView init complete");
-                if (closing) return;
-                var core = web.CoreWebView2;
-                reminders = new ReminderScheduler(Dispatcher, env.UserDataFolder);
-                core.SetVirtualHostNameToFolderMapping(Host, assets, CoreWebView2HostResourceAccessKind.Deny);
-                core.Settings.AreDefaultContextMenusEnabled = false;
-                core.Settings.IsStatusBarEnabled = false;
-                core.Settings.IsZoomControlEnabled = false;
-                core.Settings.AreBrowserAcceleratorKeysEnabled = false;
-                // A download can begin with a blob navigation on some runtime versions.
-                core.NavigationStarting += (_, e) => e.Cancel = e.Uri != Page &&
-                    !e.Uri.StartsWith("blob:https://" + Host + "/", StringComparison.Ordinal);
-                core.FrameNavigationStarting += (_, e) => e.Cancel = true;
-                core.NewWindowRequested += (_, e) => e.Handled = true;
-                core.PermissionRequested += (_, e) => e.State = CoreWebView2PermissionState.Deny;
-                core.WebMessageReceived += Receive;
-                core.DownloadStarting += SaveDownload;
-                core.NavigationCompleted += (_, e) => {
-                    trace.Record("NavigationCompleted success=" + e.IsSuccess);
-                    if (e.IsSuccess)
-                    {
-                        pageReady = true;
-                        QueueReveal();
-                        if (IsActive) web.Focus();
-                    }
-                    if (!e.IsSuccess && e.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
-                    {
-                        pageReady = true;
-                        firstAppearance = false;
-                        QueueReveal();
-                        MessageBox.Show("日历载入失败。请从系统托盘刷新组件。", Title);
-                    }
-                };
-                menu.Items.Add("刷新组件", null, (_, __) => core.Reload());
-                menu.Items.Add("查看输入诊断", null, async (_, __) => {
-                    try
-                    {
-                        var counts = await core.ExecuteScriptAsync("window.deskcalInputStatus?.() ?? null");
-                        var parts = counts.Trim('[', ']').Split(',');
-                        string status = parts.Length == 2
-                            ? $"网页已就绪。自上次加载起，按下 {parts[0]} 次，点击 {parts[1]} 次。"
-                            : "网页的输入诊断尚未就绪。";
-                        MessageBox.Show(status + (appearance.AcrylicActive ? "\n已启用系统 Acrylic。" : "\n使用兼容底色。"), "DeskCal 1.0.6 · 输入诊断");
-                    }
-                    catch (Exception e) { if (!closing) MessageBox.Show(e.Message, Title); }
-                });
-                var show = new Forms.ToolStripMenuItem("显示 DeskCal", null, (_, __) => { trace.Record("tray menu show"); Recover(); });
-                var hide = new Forms.ToolStripMenuItem("隐藏 DeskCal", null, (_, __) => HideToTray());
-                menu.Items.Insert(0, show);
-                menu.Items.Insert(1, hide);
-                menu.Items.Insert(2, new Forms.ToolStripSeparator());
-                menu.Items.Add(new Forms.ToolStripSeparator());
-                trace.Menu(menu);
-                menu.Items.Add("退出 DeskCal", null, (_, __) => Exit());
-                menu.Opening += (_, __) => {
-                    show.Enabled = !placement.MainShown;
-                    hide.Enabled = !placement.TrayHidden;
-                };
-                tray = new Forms.NotifyIcon {
-                    Icon = System.Drawing.Icon.ExtractAssociatedIcon(Forms.Application.ExecutablePath),
-                    Text = "DeskCal 1.0.6", ContextMenuStrip = menu, Visible = true
-                };
-                tray.MouseClick += (_, e) => {
-                    if (e.Button == Forms.MouseButtons.Left) ToggleVisibility();
-                };
-                core.Navigate(Page);
-            }
-            catch (Exception e)
-            {
-                if (closing) return;
-                string detail = e is WebView2RuntimeNotFoundException
-                    ? "请安装 Microsoft Edge WebView2 Evergreen 运行时，再打开 DeskCal。"
-                    : e.Message;
-                MessageBox.Show("DeskCal 无法启动。\n" + detail, Title, MessageBoxButton.OK, MessageBoxImage.Error);
-                Exit();
-            }
+            var show = new Forms.ToolStripMenuItem("显示 DeskCal", null, (_, __) => { trace.Record("tray menu show"); Recover(); });
+            var hide = new Forms.ToolStripMenuItem("隐藏 DeskCal", null, (_, __) => HideToTray());
+            menu.Items.Insert(0, show);
+            menu.Items.Insert(1, hide);
+            menu.Items.Insert(2, new Forms.ToolStripSeparator());
+            menu.Items.Add(new Forms.ToolStripSeparator());
+            trace.Menu(menu);
+            menu.Items.Add("退出 DeskCal", null, (_, __) => Exit());
+            menu.Opening += (_, __) => {
+                show.Enabled = !placement.MainShown;
+                hide.Enabled = !placement.TrayHidden;
+            };
+            tray = new Forms.NotifyIcon {
+                Icon = System.Drawing.Icon.ExtractAssociatedIcon(Forms.Application.ExecutablePath),
+                Text = "DeskCal Acrylic B (WPF only)", ContextMenuStrip = menu, Visible = true
+            };
+            tray.MouseClick += (_, e) => {
+                if (e.Button == Forms.MouseButtons.Left) ToggleVisibility();
+            };
+            // Match the initial geometry recorded in the paired x64 WebView2 run.
+            placement.Resize(916, 745, initial: true);
+            surfaceReady = true;
+            trace.Record("pure WPF surface ready");
+            QueueReveal();
         }
 
         private void EndSession(object sender, SessionEndingCancelEventArgs e)
@@ -286,7 +243,7 @@ namespace DeskCal
 
         private void QueueReveal()
         {
-            if (!needsReveal || !pageReady || firstAppearance || !IsVisible || awaitingFrame || closing) return;
+            if (!needsReveal || !surfaceReady || !IsVisible || awaitingFrame || closing) return;
             awaitingFrame = true;
             CompositionTarget.Rendering += RevealAfterFrame;
             InvalidateVisual();
@@ -315,7 +272,7 @@ namespace DeskCal
                 {
                     focusOnReveal = false;
                     Activate();
-                    web.Focus();
+                    surface.Focus();
                 }
             }));
         }
@@ -335,73 +292,8 @@ namespace DeskCal
                 return;
             }
             Activate();
-            web.Focus();
+            surface.Focus();
         }
 
-        private void Receive(object sender, CoreWebView2WebMessageReceivedEventArgs e)
-        {
-            if (e.Source != Page) return;
-            string message;
-            try { message = e.TryGetWebMessageAsString(); }
-            catch (ArgumentException) { return; }
-            if (message == "diag grip down" || message == "diag grip lostcapture")
-            {
-                trace.Record(message);
-                return;
-            }
-            const string schedule = "reminders ";
-            if (message != null && message.StartsWith(schedule, StringComparison.Ordinal))
-            {
-                reminders.Update(message.Substring(schedule.Length));
-                return;
-            }
-            var p = (message ?? "").Split(' ');
-            if (p.Length == 4 && p[0] == "size" && int.TryParse(p[1], out int requestedWidth) &&
-                int.TryParse(p[2], out int requestedHeight) && (p[3] == "preview" || p[3] == "save"))
-            {
-                trace.Record("page size request " + requestedWidth + "x" + requestedHeight + " " + p[3]);
-                placement.Resize(requestedWidth, requestedHeight);
-                if (p[3] == "save") SendSize("saved");
-                return;
-            }
-
-            if (p.Length != 6 || p[0] != "appearance" || !int.TryParse(p[1], out int width) ||
-                !int.TryParse(p[2], out int height) || !int.TryParse(p[3], out int percent) ||
-                !int.TryParse(p[4], out int blur) || percent < 70 || percent > 160 ||
-                blur < 0 || blur > 48 || (p[5] != "light" && p[5] != "dark")) return;
-            double zoom = percent / 100.0;
-            if (web.ZoomFactor != zoom) web.ZoomFactor = zoom;
-            appearance.Apply(blur > 0, p[5] == "dark");
-            if (firstAppearance)
-            {
-                firstAppearance = false;
-                placement.Resize(width, height, initial: true);
-                SendSize("current");
-                QueueReveal();
-            }
-        }
-
-        private void SendSize(string kind)
-        {
-            web.CoreWebView2.PostWebMessageAsString($"size {kind} {Math.Round(Width):0} {Math.Round(Height):0}");
-        }
-
-        private void SaveDownload(object sender, CoreWebView2DownloadStartingEventArgs e)
-        {
-            var pending = e.GetDeferral();
-            e.Handled = true;
-            // Let WebView2 return from its callback before opening a modal dialog.
-            Dispatcher.BeginInvoke(new Action(() => {
-                try
-                {
-                    var file = Path.GetFileName(e.ResultFilePath);
-                    var dialog = new SaveFileDialog { FileName = file, Filter = "导出文件 (*" +
-                        Path.GetExtension(file) + ")|*" + Path.GetExtension(file), OverwritePrompt = true };
-                    if (!closing && dialog.ShowDialog(this) == true) e.ResultFilePath = dialog.FileName;
-                    else e.Cancel = true;
-                }
-                finally { pending.Complete(); }
-            }));
-        }
     }
 }

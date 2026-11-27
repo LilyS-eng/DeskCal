@@ -2,7 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
-using System.Reflection;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -11,17 +11,14 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
-using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.Wpf;
 using Forms = System.Windows.Forms;
 
 namespace DeskCal
 {
-    // Read-only observation except for the explicitly selected browser A/B experiment.
     internal sealed class AcrylicTrace : IDisposable
     {
         private readonly Window window;
-        private readonly WebView2 web;
+        private readonly Grid surface;
         private readonly BlockingCollection<string> lines = new BlockingCollection<string>();
         private readonly Thread writer;
         private readonly Stopwatch clock = Stopwatch.StartNew();
@@ -36,14 +33,14 @@ namespace DeskCal
             "EDGE_RESTORE_GRAY", "EDGE_RESIZE_ACRYLIC_OK", "OBSERVED_GRAY", "OBSERVED_ACRYLIC_OK" };
         private readonly bool[] registered = new bool[markers.Length];
 
-        public AcrylicTrace(Window window, WebView2 web)
+        public AcrylicTrace(Window window, Grid surface)
         {
             this.window = window;
-            this.web = web;
+            this.surface = surface;
             string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "DeskCal", "logs");
             Directory.CreateDirectory(dir);
-            path = Path.Combine(dir, $"acrylic-diagnostic-{DateTime.Now:yyyyMMdd-HHmmss-fff}-{Process.GetCurrentProcess().Id}.log");
+            path = Path.Combine(dir, $"acrylic-no-webview2-{DateTime.Now:yyyyMMdd-HHmmss-fff}-{Process.GetCurrentProcess().Id}.log");
             var stream = new StreamWriter(path, false, new UTF8Encoding(false)) { AutoFlush = true };
             writer = new Thread(() => {
                 using (stream) {
@@ -52,7 +49,7 @@ namespace DeskCal
                 }
             }) { IsBackground = true };
             writer.Start();
-            Record("startup OS=" + Environment.OSVersion + " SDK=" + typeof(WebView2).Assembly.GetName().Version);
+            Record("startup OS=" + Environment.OSVersion + " variant=B-pure-WPF");
             window.SourceInitialized += (_, __) => {
                 source = (HwndSource)PresentationSource.FromVisual(window);
                 source.AddHook(Hook);
@@ -65,9 +62,9 @@ namespace DeskCal
             window.StateChanged += (_, __) => Record("StateChanged");
             window.IsVisibleChanged += (_, __) => Record("IsVisibleChanged " + window.IsVisible);
             window.SizeChanged += (_, e) => Record("SizeChanged previous=" + e.PreviousSize);
-            web.SizeChanged += (_, e) => Record("WebView.SizeChanged previous=" + e.PreviousSize);
-            web.LayoutUpdated += (_, __) => {
-                string layout = window.RenderSize + "/" + web.RenderSize + "/" + web.IsArrangeValid;
+            surface.SizeChanged += (_, e) => Record("Surface.SizeChanged previous=" + e.PreviousSize);
+            surface.LayoutUpdated += (_, __) => {
+                string layout = window.RenderSize + "/" + surface.RenderSize + "/" + surface.IsArrangeValid;
                 if (lastLayout != layout) { lastLayout = layout; Record("LayoutUpdated geometry/validity changed"); }
             };
         }
@@ -79,27 +76,12 @@ namespace DeskCal
                 string marker = markers[i];
                 group.DropDownItems.Add($"Ctrl+Alt+{i+1}  {marker}", null, (_, __) => Mark(marker));
             }
-            group.DropDownItems.Add("A/B 实验：隐藏 / 恢复 WebView2", null, (_, __) => {
-                Record("A/B before toggle");
-                web.Visibility = web.Visibility == Visibility.Visible ? Visibility.Hidden : Visibility.Visible;
-                Record("A/B after toggle");
-            });
             menu.Items.Add(group);
         }
 
-        private async void Mark(string marker)
+        private void Mark(string marker)
         {
             Record("MARK " + marker);
-            var core = web.CoreWebView2;
-            if (core == null) return;
-            try {
-                // Only geometry and computed colors. Never record tasks, titles, URLs or text.
-                string css = await core.ExecuteScriptAsync(@"JSON.stringify({
-                  viewport:[innerWidth,innerHeight,devicePixelRatio],focus:document.hasFocus(),
-                  layers:[document.documentElement,document.body,document.querySelector('.widget')].map(
-                  e=>e?[getComputedStyle(e).backgroundColor,getComputedStyle(e).backdropFilter,getComputedStyle(e).opacity]:null)})");
-                Record("DOM sample after MARK " + marker + " " + css);
-            } catch (Exception e) { Record("DOM sample unavailable " + e.GetType().Name); }
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -132,22 +114,24 @@ namespace DeskCal
         private static string Layout(FrameworkElement e) =>
             $"{e.ActualWidth},{e.ActualHeight}/{e.RenderSize}/measure:{e.IsMeasureValid},arrange:{e.IsArrangeValid}";
 
-        private static readonly BindingFlags Fields = BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic;
-        private CoreWebView2Controller Controller()
-        {
-            // Pinned WPF SDK keeps its controller in WebView2Base, without a public getter.
-            var host = typeof(WebView2).GetField("m_webview2Base", Fields)?.GetValue(web);
-            return host?.GetType().GetProperty("CoreWebView2Controller", Fields)?.GetValue(host) as CoreWebView2Controller;
-        }
         public void Record(string reason)
         {
             if (closed) return;
             var b = new StringBuilder().Append(DateTimeOffset.Now.ToString("O")).Append(" ticks=")
                 .Append(clock.ElapsedTicks).Append(" ").Append(reason);
             try {
+                if (reason.StartsWith("MARK ") || reason == "Closed" || reason == "pure WPF surface ready") {
+                    var assemblies = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetName().Name);
+                    using (var proc = Process.GetCurrentProcess()) {
+                        var modules = proc.Modules.Cast<ProcessModule>().Select(m => m.ModuleName);
+                        var matches = assemblies.Concat(modules).Where(n =>
+                            n.IndexOf("WebView2", StringComparison.OrdinalIgnoreCase) >= 0);
+                        b.Append(" browserModules=[").Append(string.Join(",", matches)).Append("]");
+                    }
+                }
                 var src = PresentationSource.FromVisual(window) as HwndSource;
                 b.Append($" | source={Id(src)} target={Id(src?.CompositionTarget)} rootVisual={Id(src?.RootVisual)} windowBg={window.Background} targetBg={src?.CompositionTarget?.BackgroundColor} panelBg={(window.Content as Panel)?.Background ?? Brushes.Transparent}(null={((window.Content as Panel)?.Background == null)})");
-                b.Append($" WPF={Layout(window)} active={window.IsActive} visible={window.IsVisible} state={window.WindowState} windowStyle={window.WindowStyle} allowsTransparency={window.AllowsTransparency} web={Layout(web)} webVisible={web.Visibility}/{web.IsVisible} defaultBG={web.DefaultBackgroundColor.ToArgb():X8}");
+                b.Append($" WPF={Layout(window)} active={window.IsActive} visible={window.IsVisible} state={window.WindowState} windowStyle={window.WindowStyle} allowsTransparency={window.AllowsTransparency} surface={Layout(surface)} surfaceBg={surface.Background}");
                 var h = source?.Handle ?? IntPtr.Zero;
                 if (h != IntPtr.Zero) {
                     var p = new Placement { Length = Marshal.SizeOf(typeof(Placement)) };
@@ -162,9 +146,7 @@ namespace DeskCal
                         var name = new StringBuilder(128); GetClassName(child,name,name.Capacity);
                         b.Append($" | child {name} parent={H(GetParent(child))} {Native(child)}"); return true;
                     },IntPtr.Zero);
-                    var c = Controller();
-                    if(c != null) b.Append($" | controller={Id(c)} parent={H(c.ParentWindow)} bounds={c.Bounds} mode={c.BoundsMode} raster={c.RasterizationScale} visible={c.IsVisible} bg={c.DefaultBackgroundColor.ToArgb():X8}");
-                    else b.Append(" | controller=unavailable");
+
                 }
             } catch (Exception e) { b.Append(" snapshotError=").Append(e.GetType().Name).Append("/").Append(e.HResult.ToString("X8")); }
             lines.Add(b.ToString());

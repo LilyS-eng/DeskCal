@@ -1,65 +1,27 @@
-name: Windows widget input
+name: Pure WPF Acrylic diagnostic
 on:
   push:
-    branches: [diagnostic/acrylic-lifecycle]
+    branches: [diagnostic/acrylic-no-webview2]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  desktop:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-11-arm, windows-2025]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+  diagnostic:
+    runs-on: windows-2025
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-      - name: Build x64 widget
-        run: dotnet build Windows/DeskCal.csproj -c Release
-      - name: Ensure Evergreen WebView2 Runtime is available
-        shell: pwsh
+      - run: dotnet build Windows/DeskCal.csproj -c Release
+      - name: Check package and managed references
+        shell: powershell
         run: |
-          $edge = "${env:ProgramFiles(x86)}\Microsoft\EdgeWebView\Application"
-          if (!(Test-Path "$edge\*\msedgewebview2.exe")) {
-            $installer = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
-            Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $installer
-            if ((Get-AuthenticodeSignature $installer).Status -ne 'Valid') { throw 'Invalid runtime installer signature' }
-            $p = Start-Process $installer -ArgumentList '/silent','/install' -Wait -PassThru
-            Write-Host "Evergreen bootstrapper exit $($p.ExitCode)"
-          }
-          Get-ChildItem "$edge\*\msedgewebview2.exe" | Select-Object -ExpandProperty FullName
-      - name: Exercise real window input
-        shell: pwsh
-        run: |
-          if ($env:RUNNER_ARCH -eq 'ARM64') {
-            python tests/windows/test_desktop.py Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe
-          } else {
-            python Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe
-          }
-      - name: Verify lifecycle log
-        shell: pwsh
-        run: |
-          $logs = Get-ChildItem "$env:LOCALAPPDATA/DeskCal/logs/acrylic-diagnostic-*.log"
-          $text = ($logs | Get-Content) -join "`n"
-          foreach ($key in @('SourceInitialized','ContentRendered','DwmExtend requested=', 'diag grip down','edge restore requested','after Show','controller=', ' raster=', 'Closed', 'DOM sample after MARK BEFORE_MANUAL_RESIZE', 'A/B after toggle', 'webVisible=Hidden/False')) {
-            if (!$text.Contains($key)) { throw "Missing evidence $key" }
-          }
-          Copy-Item docs/acrylic-diagnostic.md Windows/bin/Release/net48/
+          $dir = 'Windows/bin/Release/net48'
+          $app = [Reflection.Assembly]::ReflectionOnlyLoadFrom((Resolve-Path "$dir/DeskCal.WpfDiagnostic.exe"))
+          if ($app.GetReferencedAssemblies().Name -match 'WebView2') { throw 'Browser assembly reference' }
+          if (Get-ChildItem $dir -Recurse | Where-Object { $_.Name -match 'WebView2|index.html' }) { throw 'Unexpected web payload' }
+      - name: Exercise the x64 entry point and verify the log
+        run: python tests/windows/pure_wpf_smoke.py Windows/bin/Release/net48/DeskCal.WpfDiagnostic.exe
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: Synthetic-lifecycle-logs-${{ matrix.os }}
-          path: ~/AppData/Local/DeskCal/logs/acrylic-diagnostic-*.log
-          if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: DeskCal-Diagnostic-x64-${{ matrix.os }}
+          name: DeskCal-Diagnostic-NoWebView2-x64
           path: Windows/bin/Release/net48/
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: Calendar-preview-${{ matrix.os }}
-          path: ${{ runner.temp }}/DeskCal.png
-          if-no-files-found: ignore

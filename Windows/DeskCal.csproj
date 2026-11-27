@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <AssemblyName>DeskCal.WpfDiagnostic</AssemblyName>
     <Version>1.0.6</Version>
     <TargetFramework>net48</TargetFramework>
     <OutputType>WinExe</OutputType>
@@ -8,10 +9,11 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>DeskCal.ico</ApplicationIcon>
     <LangVersion>latest</LangVersion>
-    <WebViewVersion>1.0.3912.50</WebViewVersion>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="ReminderScheduler.cs" />
+    <Content Include="../docs/acrylic-no-webview2.md" Link="诊断说明.md" CopyToOutputDirectory="PreserveNewest" />
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
     <Reference Include="WindowsBase" />
@@ -20,10 +22,6 @@
     <Reference Include="System.Drawing" />
     <Reference Include="System.Windows.Forms" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.Web.WebView2" Version="$(WebViewVersion)" GeneratePathProperty="true" />
-    <Content Include="../index.html" Link="web/index.html" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../LICENSE" Link="LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="$(PkgMicrosoft_Web_WebView2)/LICENSE.txt" Link="WebView2-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="$(PkgMicrosoft_Web_WebView2)/NOTICE.txt" Link="WebView2-NOTICE.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
