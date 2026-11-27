@@ -20,8 +20,9 @@ jobs:
           if ($app.GetReferencedAssemblies().Name -match 'WebView2') { throw 'Browser assembly reference' }
           if (Get-ChildItem $dir -Recurse | Where-Object { $_.Name -match 'WebView2|index.html' }) { throw 'Unexpected web payload' }
       - name: Exercise the x64 entry point and verify the log
-        run: python tests/windows/pure_wpf_smoke.py Windows/bin/Release/net48/DeskCal.WpfDiagnostic.exe
+        run: python tests/windows/test_desktop.py tests/windows/pure_wpf_smoke.py Windows/bin/Release/net48/DeskCal.WpfDiagnostic.exe
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: DeskCal-Diagnostic-NoWebView2-x64
           path: Windows/bin/Release/net48/

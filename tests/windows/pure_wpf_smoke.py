@@ -66,14 +66,16 @@ try:
         f'acrylic-no-webview2-*-{p.pid}.log'), None))
     def records():
         return log.read_text(encoding='utf-8')
+    wait(lambda: "DwmSet attr=13 requested=0 hr=00000000" in records())
     for cycle in range(2):
         r = bounds(h)
         u.SetForegroundWindow(h)
         u.SetCursorPos(r.right-18, r.bottom-18)
         u.mouse_event(2, 0, 0, 0, 0)
-        time.sleep(.12)
-        u.SetCursorPos(r.right-38, r.bottom-32)
-        time.sleep(.12)
+        wait(lambda: records().count("WPF grip down") > cycle)
+        for delta in range(4, 24, 4):
+            u.SetCursorPos(r.right-18-delta, r.bottom-18-delta)
+            time.sleep(.06)
         u.mouse_event(4, 0, 0, 0, 0)
         wait(lambda: bounds(h).right < r.right-5)
         r = bounds(h)
@@ -94,6 +96,10 @@ try:
     assert 'attr38=00000000/3' in text and 'pure WPF surface ready browserModules=[]' in text
     assert 'child Chrome_' not in text and 'snapshotError' not in text
     print('PASS: cold reveal, physical resize, close, tray callback and restore twice, marker and module census.')
+except Exception:
+    if 'log' in globals():
+        print("\n".join(line.split(" | ")[0] for line in records().splitlines()[-40:]))
+    raise
 finally:
     if p.poll() is None:
         p.terminate()
