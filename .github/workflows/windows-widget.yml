@@ -1,7 +1,7 @@
 name: Windows widget input
 on:
   push:
-    branches: [windows-1.0.6]
+    branches: [windows-1.0.7]
   workflow_dispatch:
 permissions:
   contents: read

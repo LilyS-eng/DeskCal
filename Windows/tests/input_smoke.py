@@ -386,6 +386,7 @@ def run(exe, profile):
         print("Initial profile empty; Acrylic attribute enabled before resize, tool-window and input styles verified.", flush=True)
         if os.environ.get("GITHUB_ACTIONS") == "true":
             capture(app.hwnd)
+        print("Lifecycle cold (from Loaded):", app.js("trace:read"), flush=True)
         original = window_geometry(app.hwnd)
         corner, bounds = W.POINT(), W.RECT()
         assert origin(app.hwnd, C.byref(corner)) and rect(app.hwnd, C.byref(bounds))
@@ -409,6 +410,7 @@ def run(exe, profile):
             time.sleep(.3)
             assert window_geometry(app.hwnd) == original
             assert_acrylic(app.hwnd)
+        print("Lifecycle tray restore:", app.js("trace:read"), flush=True)
         app.js("tray:left")
         wait(lambda: not visible(app.hwnd), "tray click also hides")
         app.js("tray:left")
@@ -468,9 +470,13 @@ def run(exe, profile):
         assert down>=18 and clicks>=18
         print(f"PASS: {down} OS pointer downs, {clicks} clicks, editor focus/typing, dialogs, views, scroll, focus return.", flush=True)
         probe_backdrop(app)
+        app.js("trace:read")
         drag_resize(app)
+        print("Lifecycle pointer resize:", app.js("trace:read"), flush=True)
         test_size(app)
+        app.js("trace:read")
         test_edges(app)
+        print("Lifecycle dock:", app.js("trace:read"), flush=True)
     finally:
         app.close()
     assert app.proc.returncode == 0, "Tray exit must end the process normally"

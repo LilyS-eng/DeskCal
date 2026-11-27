@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Interop;
@@ -19,6 +20,36 @@ using Microsoft.Web.WebView2.Wpf;
 internal class InputObserver
 {
     private static Window backing;
+    private static bool observed;
+    private static readonly List<string> trace = new List<string>();
+
+    private static IntPtr Record(string target, int message, IntPtr position)
+    {
+        if (message == 0x18) trace.Add(target + ":WM_SHOWWINDOW");
+        if (message == 0x47) trace.Add(target + ":WM_WINDOWPOSCHANGED");
+        if (message == 0x05) trace.Add(target + ":WM_SIZE " +
+            (position.ToInt64() & 0xffff) + "x" + ((position.ToInt64() >> 16) & 0xffff));
+        return IntPtr.Zero;
+    }
+
+    private static void ObserveLoaded(object sender, RoutedEventArgs e)
+    {
+        var widget = sender as Window;
+        if (observed || widget == null || widget.GetType().FullName != "DeskCal.Widget") return;
+        observed = true;
+        trace.Add("Loaded");
+        var source = (HwndSource)PresentationSource.FromVisual(widget);
+        source.AddHook((IntPtr hwnd, int message, IntPtr parameter, IntPtr position, ref bool handled) =>
+            Record("main", message, position));
+        widget.SizeChanged += (_, size) => trace.Add("WPF SizeChanged " + size.NewSize);
+        widget.IsVisibleChanged += (_, state) => trace.Add("WPF IsVisibleChanged " + state.NewValue);
+        widget.ContentRendered += (_, __) => trace.Add("WPF ContentRendered");
+        var browser = ((Panel)widget.Content).Children.OfType<WebView2>().Single();
+        browser.MessageHook += (IntPtr hwnd, int message, IntPtr parameter, IntPtr position, ref bool handled) =>
+            Record("browser", message, position);
+        browser.SizeChanged += (_, size) => trace.Add("Browser layout " + size.NewSize);
+        browser.NavigationCompleted += (_, __) => trace.Add("Browser NavigationCompleted");
+    }
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y,
@@ -49,6 +80,7 @@ internal class InputObserver
     [STAThread]
     private static int Main(string[] args)
     {
+        EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent, new RoutedEventHandler(ObserveLoaded));
         var dispatcher = Dispatcher.CurrentDispatcher;
         var reader = new Thread(() => ReadRequests(dispatcher)) { IsBackground = true };
         reader.Start();
@@ -78,6 +110,12 @@ internal class InputObserver
     private static Task<string> Inspect(string expression)
     {
         var app = Application.Current;
+        if (expression == "trace:read")
+        {
+            var result = string.Join(" | ", trace);
+            trace.Clear();
+            return Task.FromResult("\"" + result.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"");
+        }
         if (expression.StartsWith("backdrop:"))
         {
             SetBackdropProbe(app.MainWindow, expression.Substring("backdrop:".Length));
