@@ -1,7 +1,7 @@
 name: Pure WPF Acrylic diagnostic
 on:
   push:
-    branches: [diagnostic/acrylic-no-webview2]
+    branches: [diagnostic/acrylic-etw]
   workflow_dispatch:
 permissions:
   contents: read
@@ -19,10 +19,40 @@ jobs:
           $app = [Reflection.Assembly]::ReflectionOnlyLoadFrom((Resolve-Path "$dir/DeskCal.WpfDiagnostic.exe"))
           if ($app.GetReferencedAssemblies().Name -match 'WebView2') { throw 'Browser assembly reference' }
           if (Get-ChildItem $dir -Recurse | Where-Object { $_.Name -match 'WebView2|index.html' }) { throw 'Unexpected web payload' }
-      - name: Exercise the x64 entry point and verify the log
-        run: python tests/windows/test_desktop.py tests/windows/pure_wpf_smoke.py Windows/bin/Release/net48/DeskCal.WpfDiagnostic.exe
+      - name: Exercise external ETW capture around the browser-free input test
+        shell: powershell
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'DeskCalETW'
+          $script = (Resolve-Path 'diagnostics/etw/Capture.ps1').Path
+          $job = Start-Job -ScriptBlock { param($s,$r) & $s -OutputRoot $r } -ArgumentList $script,$root
+          try {
+            $deadline = (Get-Date).AddSeconds(50)
+            while (!(Select-String -Path "$root/*/capture.txt" -Pattern '^Ready$' -Quiet -ErrorAction SilentlyContinue)) {
+              if ($job.State -ne 'Running' -or (Get-Date) -gt $deadline) { Receive-Job $job; throw 'Recorder not ready' }
+              Start-Sleep -Milliseconds 300
+            }
+            python tests/windows/test_desktop.py tests/windows/pure_wpf_smoke.py Windows/bin/Release/net48/DeskCal.WpfDiagnostic.exe
+            if ($LASTEXITCODE) { throw 'Input test failed' }
+            Wait-Job $job -Timeout 120 | Out-Null
+            Receive-Job $job -ErrorAction Stop
+            $capture = Get-ChildItem "$root/*/graphics.etl" | Select-Object -First 1
+            $bundle = Get-ChildItem "$root/*.zip"
+            if (!$capture -or !$bundle) { throw 'Missing capture bundle' }
+            $appLog = Get-ChildItem "$root/*/acrylic-no-webview2-*.log" | Select-Object -First 1
+            $appPid = [int]($appLog.BaseName.Split('-')[-1])
+            foreach ($provider in 'Microsoft-Windows-Dwm-Core','Microsoft-Windows-WPF') {
+              $match = Get-WinEvent -Path $capture.FullName -Oldest | Where-Object {
+                ($_.ProviderName -eq $provider -or ($provider -eq 'Microsoft-Windows-WPF' -and $_.ProviderId -eq 'e13b77a8-14b6-11de-8069-001b212b5009')) -and
+                ($provider -ne 'Microsoft-Windows-WPF' -or $_.ProcessId -eq $appPid)
+              } | Select-Object -First 1
+              if (!$match) { throw "Missing events for $provider" }
+              Write-Host "$provider PID=$($match.ProcessId) Event=$($match.Id)"
+            }
+          } finally {
+            if ($job.State -eq 'Running') { Wait-Job $job -Timeout 125 | Out-Null }
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: DeskCal-Diagnostic-NoWebView2-x64
+          name: Browser-free-test-build
           path: Windows/bin/Release/net48/
