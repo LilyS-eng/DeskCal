@@ -34,7 +34,7 @@ namespace DeskCal
     internal sealed class Widget : Window
     {
         private const string Host = "deskcal.invalid";
-        private const string Page = "https://" + Host + "/index.html?widget=1&host=windows&build=1.0.6";
+        private const string Page = "https://" + Host + "/index.html?widget=1&host=windows&build=1.0.7";
         private readonly string dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DeskCal");
         private readonly WebView2 web = new WebView2();
         private readonly Forms.ContextMenuStrip menu = new Forms.ContextMenuStrip();
@@ -55,7 +55,7 @@ namespace DeskCal
 
         public Widget()
         {
-            Title = "DeskCal 1.0.6";
+            Title = "DeskCal 1.0.7";
             Width = 620;
             Height = 520 + GripHeight;
             WindowStyle = WindowStyle.None;
@@ -96,8 +96,7 @@ namespace DeskCal
             header.Children.Add(close);
             handle.MouseLeftButtonDown += (_, e) => {
                 if (e.ButtonState == MouseButtonState.Pressed) {
-                    DragMove();
-                    if (placement.AfterDrag()) HideToEdge();
+                    if (placement.Drag()) HideToEdge();
                 }
             };
             var layout = new DockPanel();
@@ -198,7 +197,7 @@ namespace DeskCal
                         string status = parts.Length == 2
                             ? $"网页已就绪。自上次加载起，按下 {parts[0]} 次，点击 {parts[1]} 次。"
                             : "网页的输入诊断尚未就绪。";
-                        MessageBox.Show(status + (appearance.AcrylicActive ? "\n已启用系统 Acrylic。" : "\n使用兼容底色。"), "DeskCal 1.0.6 · 输入诊断");
+                        MessageBox.Show(status + (appearance.AcrylicActive ? "\n已启用系统 Acrylic。" : "\n使用兼容底色。"), "DeskCal 1.0.7 · 输入诊断");
                     }
                     catch (Exception e) { if (!closing) MessageBox.Show(e.Message, Title); }
                 });
@@ -215,7 +214,7 @@ namespace DeskCal
                 };
                 tray = new Forms.NotifyIcon {
                     Icon = System.Drawing.Icon.ExtractAssociatedIcon(Forms.Application.ExecutablePath),
-                    Text = "DeskCal 1.0.6", ContextMenuStrip = menu, Visible = true
+                    Text = "DeskCal 1.0.7", ContextMenuStrip = menu, Visible = true
                 };
                 tray.MouseClick += (_, e) => {
                     if (e.Button == Forms.MouseButtons.Left) ToggleVisibility();
@@ -275,6 +274,11 @@ namespace DeskCal
         {
             if (!needsReveal || !pageReady || firstAppearance || !IsVisible || awaitingFrame || closing) return;
             awaitingFrame = true;
+            if (appearance.IsConcealed && appearance.AcrylicActive)
+                placement.PrepareBackdropSurface(() => {
+                    UpdateLayout();
+                    web.UpdateWindowPos();
+                });
             CompositionTarget.Rendering += RevealAfterFrame;
             InvalidateVisual();
         }
@@ -333,11 +337,22 @@ namespace DeskCal
                 return;
             }
             var p = (message ?? "").Split(' ');
-            if (p.Length == 4 && p[0] == "size" && int.TryParse(p[1], out int requestedWidth) &&
-                int.TryParse(p[2], out int requestedHeight) && (p[3] == "preview" || p[3] == "save"))
+            if (p.Length == 1 && p[0] == "resize-cancel")
             {
-                placement.Resize(requestedWidth, requestedHeight);
-                if (p[3] == "save") SendSize("saved");
+                placement.CancelPreview();
+                return;
+            }
+            if (p.Length == 4 && p[0] == "size" && int.TryParse(p[1], out int requestedWidth) &&
+                int.TryParse(p[2], out int requestedHeight))
+            {
+                if (p[3] == "preview" && !needsReveal && placement.MainShown)
+                    placement.Preview(requestedWidth, requestedHeight);
+                else if (p[3] == "save" && placement.MainShown)
+                {
+                    placement.CancelPreview();
+                    placement.Resize(requestedWidth, requestedHeight);
+                    SendSize("saved");
+                }
                 return;
             }
 

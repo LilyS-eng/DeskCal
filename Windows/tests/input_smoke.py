@@ -103,7 +103,7 @@ class Widget:
         Thread(target=read_output, daemon=True).start()
         self.hwnd = None
         try:
-            self.hwnd = wait(lambda: find(None, "DeskCal 1.0.6"), "window", 120)
+            self.hwnd = wait(lambda: find(None, "DeskCal 1.0.7"), "window", 120)
             wait(lambda: self.js("document.querySelectorAll('.cell').length===42"),
                  "WebView2 renders the initial calendar", 90)
             wait(lambda: presented(self.hwnd), "first composed window reveal", 30)
@@ -241,13 +241,13 @@ def mouse_click(x, y):
     mouse(4, 0, 0, 0, 0)
 
 
-def drag_widget(app, target_left):
+def drag_widget(app, target_x):
     left, top, right, _ = window_geometry(app.hwnd)
     x, y = (left+right)//2, top+12
     assert move(x, y)
     mouse(2, 0, 0, 0, 0)
     time.sleep(.2)
-    offset = target_left-left
+    offset = target_x-x
     for step in range(1, 9):
         assert move(x + round(offset*step/8), y)
         time.sleep(.04)
@@ -260,7 +260,10 @@ def test_edges(app):
     left, top, right, bottom = window_geometry(app.hwnd)
     width, height = right-left, bottom-top
     middle = (work.left+work.right-width)//2
-    for target, side in [(work.left+4, "left"), (work.right-width-4, "right")]:
+    assert move(work.left+4, top+12)
+    time.sleep(.12)
+    assert presented(app.hwnd) and not visible(find(None, tab_caption))
+    for target, side in [(work.left+4, "left"), (work.right-4, "right")]:
         drag_widget(app, target)
         tab = wait(lambda: find(None, tab_caption), "edge tab created")
         wait(lambda: visible(tab) and not visible(app.hwnd), "edge tab only")
@@ -284,6 +287,14 @@ def test_edges(app):
         assert_acrylic(app.hwnd)
         app.click("#next")
         app.click("#prev")
+        for _ in range(4):
+            mouse_click(expected_left+width-55, top+15)
+            wait(lambda: visible(tab) and not visible(app.hwnd), "docked calendar closes")
+            x1,y1,x2,y2 = window_geometry(tab)
+            mouse_click((x1+x2)//2,(y1+y2)//2)
+            wait(lambda: presented(app.hwnd) and not visible(tab), "dock restore after resize staging")
+            assert window_geometry(app.hwnd) == (expected_left,top,expected_left+width,bottom)
+            assert_acrylic(app.hwnd)
         if side == "left":
             mouse_click(expected_left+width-55, top+15)
             wait(lambda: visible(tab) and not visible(app.hwnd), "header collapses docked calendar")
@@ -293,10 +304,10 @@ def test_edges(app):
             wait(lambda: not visible(app.hwnd) and not visible(tab), "tray keeps both surfaces hidden")
             app.js("tray:left")
             wait(lambda: presented(app.hwnd), "tray restores docked calendar")
-        drag_widget(app, middle)
+        drag_widget(app, middle+width//2)
         wait(lambda: abs(window_geometry(app.hwnd)[0]-middle) <= 3, "drag moves window away from edge")
         assert presented(app.hwnd) and not visible(tab)
-    print("PASS: actual mouse left/right snap, click expand, collapse, undock and tray transitions.", flush=True)
+    print("PASS: pointer-based left/right snap, five restores per side, undock and tray transitions.", flush=True)
 
 
 def probe_backdrop(app):
@@ -329,12 +340,22 @@ def drag_resize(app):
     for step in range(1,6):
         assert move(point.x-6*step,point.y-4*step)
         time.sleep(.045)
+    preview = wait(lambda: find(None,"DeskCal Resize Preview"),"resize outline exists")
+    assert visible(preview)
+    assert window_geometry(app.hwnd)==(left,top,right,bottom)
+    assert (style(preview,-20) & 0x080000A0)==0x080000A0
+    assert active()==app.hwnd or root(active(),2)==app.hwnd
+    assert "main:WM_SIZE" not in app.js("trace:read")
     mouse(4,0,0,0,0)
+    wait(lambda: not find(None,"DeskCal Resize Preview"),"resize outline is destroyed on release")
     wait(lambda: window_geometry(app.hwnd)[2] < right-12, "browser drag updates window width")
     wait(lambda: window_geometry(app.hwnd)[3] < bottom-8, "browser drag updates window height")
     assert_acrylic(app.hwnd)
     app.until("Number.isInteger(S.settings.winWidth) && Number.isInteger(S.settings.winHeight)")
-    print("PASS: actual pointer resize applies and saves both axes with Acrylic enabled.",flush=True)
+    trace = app.js("trace:read")
+    print("Lifecycle pointer resize:", trace, flush=True)
+    assert trace.count("main:WM_SIZE")==1, trace
+    print("PASS: outline moves, real window stays still then resizes once and saves.",flush=True)
 
 
 def test_size(app):
@@ -373,6 +394,36 @@ def test_size(app):
     stored(640,510)
     app.click("#gear")
     print("PASS: numeric keyboard, invalid/blank/negative/overflow input, min and current work area clamps.", flush=True)
+
+
+def test_parameters(app):
+    app.click("#gear")
+    app.js("document.querySelector('#panel').scrollTop=0")
+    def enter(field,value,submit=True):
+        app.click("#v-"+field)
+        key(0x11,0,0,0); type_letters("a"); key(0x11,0,2,0)
+        type_letters(value)
+        if submit:
+            key(0x0d,0,0,0); key(0x0d,0,2,0)
+        else:
+            app.click("#r-"+("alpha" if field=="scale" else "scale"))
+    def synced(field,value):
+        app.until(f"S.settings.{field}==={value} && document.getElementById('r-{field}').value==='{value}' && document.getElementById('v-{field}').value==='{value}'")
+    enter("scale","127")
+    synced("scale",127)
+    enter("alpha","32",False)
+    synced("alpha",32)
+    enter("alpha","abc")
+    synced("alpha",32)
+    enter("alpha","123456789")
+    synced("alpha",100)
+    app.click("#r-alpha")
+    app.until("document.getElementById('v-alpha').value===document.getElementById('r-alpha').value && S.settings.alpha<100")
+    enter("alpha","30")
+    enter("scale","100")
+    synced("scale",100)
+    app.click("#gear")
+    print("PASS: exact scale and opacity, Enter, blur, invalid/limits, and slider synchronization.",flush=True)
 
 
 def run(exe, profile):
@@ -472,8 +523,8 @@ def run(exe, profile):
         probe_backdrop(app)
         app.js("trace:read")
         drag_resize(app)
-        print("Lifecycle pointer resize:", app.js("trace:read"), flush=True)
         test_size(app)
+        test_parameters(app)
         app.js("trace:read")
         test_edges(app)
         print("Lifecycle dock:", app.js("trace:read"), flush=True)
@@ -551,7 +602,7 @@ def test_reminders(exe, profile):
 
 
 if __name__ == "__main__":
-    if find(None, "DeskCal 1.0.6"):
+    if find(None, "DeskCal 1.0.7"):
         sys.exit("Exit the running copy before running this desktop test.")
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as workspace:
         source = Path(sys.argv[1]).resolve()

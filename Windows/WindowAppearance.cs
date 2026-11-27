@@ -17,6 +17,7 @@ namespace DeskCal
         private bool? glass;
         private bool? darkInk;
         public bool AcrylicActive { get; private set; }
+        public bool IsConcealed { get; private set; }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct Margins { public int Left, Right, Top, Bottom; }
@@ -53,8 +54,10 @@ namespace DeskCal
         public void Conceal()
         {
             int value = 1;
-            DwmSetWindowAttribute(source.Handle, Cloak, ref value, sizeof(int));
+            IsConcealed = DwmSetWindowAttribute(source.Handle, Cloak, ref value, sizeof(int)) == 0;
         }
+
+        public static void WaitForComposition() => DwmFlush();
 
         public void Present()
         {
@@ -62,6 +65,7 @@ namespace DeskCal
             // while cloaked, so DWM can process it before making it visible.
             DwmFlush();
             int value = 0;
+            IsConcealed = false;
             DwmSetWindowAttribute(source.Handle, Cloak, ref value, sizeof(int));
         }
 

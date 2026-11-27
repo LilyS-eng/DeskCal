@@ -1,6 +1,6 @@
 # DeskCal
 
-适用于 Windows 11 和 macOS 的日历与待办小组件。Windows 1.0.6 使用独立无边框挂件，macOS 版显示在桌面层。
+适用于 Windows 11 和 macOS 的日历与待办小组件。Windows 1.0.7 使用独立无边框挂件，macOS 版显示在桌面层。
 
 macOS 外壳用 Swift 的 `NSPanel` + `WKWebView`，Windows 外壳用 WPF + WebView2，两者共用单文件 `index.html`。所以视觉和交互全在一个网页里，想改什么改什么。
 
@@ -10,13 +10,13 @@ macOS 外壳用 Swift 的 `NSPanel` + `WKWebView`，Windows 外壳用 WPF + WebV
 
 ## Windows 11 移植版
 
-Windows 1.0.6 沿用标准 WPF WebView2 窗口。首次显示和恢复时，DWM 暂时遮蔽主窗口，待日历、窗口尺寸和 WPF 绘制就绪后再显示。窗口可见期间由 Windows 合成 Desktop Acrylic，设置中可以开关毛玻璃。关闭系统透明效果或某些远程会话时，背景可能呈现纯色。
+Windows 1.0.7 沿用标准 WPF WebView2 窗口。首次显示和恢复时，DWM 暂时遮蔽主窗口，待最终窗口尺寸经 WM_SIZE、WPF 布局及 WebView2 子窗口提交后再显示。窗口可见期间由 Windows 合成 Desktop Acrylic，设置中可以开关毛玻璃。关闭系统透明效果或某些远程会话时，背景可能呈现纯色。
 
 挂件首次打开在主屏工作区右下角，拖顶部短横条移动。它使用正常可激活的顶层工具窗口，隐藏任务栏与 Alt+Tab 入口，保留通知区域的日历图标。其他应用获得焦点后可覆盖它；点击挂件时它仍能正常获得焦点。没有 WorkerW / Progman 嵌入、鼠标穿透、强制置底或始终置顶。
 
 ### 打开程序
 
-先从托盘退出旧版，将 x64 压缩包完整解压到新文件夹，再双击 `DeskCal.exe`。右下角显示「DeskCal 1.0.6」。点顶部右侧 × 隐藏，左键单击托盘图标显示或隐藏。右键托盘可显示、隐藏、刷新、查看输入诊断，或选择「退出 DeskCal」结束进程。运行需要 .NET Framework 4.8 或更高版本和 [Microsoft Edge WebView2 Evergreen 运行时](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)。
+先从托盘退出旧版，将 x64 压缩包完整解压到新文件夹，再双击 `DeskCal.exe`。右下角显示「DeskCal 1.0.7」。点顶部右侧 × 隐藏，左键单击托盘图标显示或隐藏。右键托盘可显示、隐藏、刷新、查看输入诊断，或选择「退出 DeskCal」结束进程。运行需要 .NET Framework 4.8 或更高版本和 [Microsoft Edge WebView2 Evergreen 运行时](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)。
 
 ### 待办提醒
 
@@ -43,8 +43,8 @@ dotnet build Windows/DeskCal.csproj -c Release
 
 - 左右箭头翻页，点月视图的日期进入当天；用日、周、月按钮切换视图。
 - 点「＋」创建待办，点圆圈勾选或恢复。在日视图或「☰ 全部待办」里点「编辑」，可改内容、日期、时间和分类。
-- 「设置」可输入宽高后点「应用」，或拖动日历右下角调整。宽高按 100% 缩放计，通常最小 380 × 300，最大为当前窗口所在显示器的工作区。数字与拖动结果随现有设置保存。
-- 拖动顶部短横条，在工作区左右边缘约 24 DIP 内松手即可吸附，只留下约 16 × 96 DIP 的把手。点把手展开，点顶部箭头收起。展开后拖离边缘可以解除吸附。按 × 或从托盘选择隐藏会一并隐藏边缘把手。
+- 「设置」可输入宽高后点「应用」，或拖动日历右下角预览轮廓，松手后应用尺寸。整体缩放与透明度右侧可直接输入百分比。宽高按 100% 缩放计，通常最小 380 × 300，最大为当前窗口所在显示器的工作区。数字与拖动结果随现有设置保存。
+- 拖动顶部短横条，将鼠标拖入工作区左右边缘约 24 DIP 的范围内松手即可吸附，只留下约 16 × 96 DIP 的把手。点把手展开，点顶部箭头收起。展开后拖离边缘可以解除吸附。按 × 或从托盘选择隐藏会一并隐藏边缘把手。
 - 若遇到输入问题，点几次日期和按钮，再从托盘选择「查看输入诊断」。计数表示本次加载后网页收到的按下与点击次数。
 - Windows 原生输入回归脚本位于 `Windows/tests/input_smoke.py`。在已解锁的专用 Windows 测试桌面，退出其他 DeskCal 实例，安装 Python 3.10+ 后，执行 `python Windows/tests/input_smoke.py Windows/bin/Release/net48/DeskCal.exe`。脚本以临时 WebView2 配置运行，通过 Windows 鼠标和键盘操作实际控件，覆盖焦点切换、滚动、关闭隐藏、托盘回调、重启持久化及真实定时提醒。独立测试程序在临时目录运行发布版入口并读取页面状态。
 

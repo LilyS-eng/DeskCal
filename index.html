@@ -375,6 +375,10 @@
   .windows-widget #grip{ touch-action:none; }
   #window-size input{ width:64px; padding:3px 4px; color:inherit; background:#252c39;
     border:1px solid rgba(255,255,255,.22); border-radius:5px; }
+  .panel .row .percent-field{ width:57px; white-space:nowrap; }
+  .percent-field input{ width:40px; color:inherit; background:transparent;
+    border:1px solid rgba(255,255,255,.20); border-radius:4px; text-align:right;
+    font:inherit; padding:2px 3px; }
   #window-size .row{ flex-wrap:wrap; }
   #window-size label{ display:inline-flex; align-items:center; gap:4px; }
   #window-size-status{ font-size:11px; min-height:1em; margin-bottom:5px; }
@@ -479,10 +483,10 @@
     </div>
     <div id="window-size-status" role="status"></div>
   </form>
-  <div class="row" data-page-node-id="LTTurHZYZYjXIYZNDUjaUO"><span class="lb" data-page-node-id="2CbOQY126d4DVQZwygStk9">整体缩放</span><input type="range" id="r-scale" min="70" max="160" step="5" data-page-node-id="rXnx2reQDdhnqJmtl6sGsZ"><span class="vl" id="v-scale" data-page-node-id="OzBvSOIJCQS8Fa1GEIc0lb"></span></div>
+  <div class="row" data-page-node-id="LTTurHZYZYjXIYZNDUjaUO"><span class="lb" data-page-node-id="2CbOQY126d4DVQZwygStk9">整体缩放</span><input type="range" id="r-scale" min="70" max="160" step="1" data-page-node-id="rXnx2reQDdhnqJmtl6sGsZ"><label class="vl percent-field"><input id="v-scale" aria-label="整体缩放百分比" type="text" inputmode="numeric" maxlength="10"> %</label></div>
 
   <h4 data-page-node-id="g0Dj407fWlMeAN585OBnOT">外观</h4>
-  <div class="row" data-page-node-id="kAe4pb8MQmxw5i9J0Ma575"><span class="lb" data-page-node-id="VFJKlg4JqUYpWa4G7rCvWk">透明度</span><input type="range" id="r-alpha" min="8" max="100" step="1" data-page-node-id="TzKuP01PB8cVXV4BAC0suR"><span class="vl" id="v-alpha" data-page-node-id="kjJ5uIDR3qndcAko6zbhqq"></span></div>
+  <div class="row" data-page-node-id="kAe4pb8MQmxw5i9J0Ma575"><span class="lb" data-page-node-id="VFJKlg4JqUYpWa4G7rCvWk">透明度</span><input type="range" id="r-alpha" min="8" max="100" step="1" data-page-node-id="TzKuP01PB8cVXV4BAC0suR"><label class="vl percent-field"><input id="v-alpha" aria-label="透明度百分比" type="text" inputmode="numeric" maxlength="10"> %</label></div>
   <div class="row" data-page-node-id="F2jGuOJSisbovaSlPBQN42"><span class="lb" data-page-node-id="tTsDE4LsvwEJqy4VJ0gcFs">毛玻璃</span><input type="range" id="r-blur" min="0" max="48" step="2" data-page-node-id="QNLLWGnxAbPNqf8GSrk6Gg"><span class="vl" id="v-blur" data-page-node-id="05pifMFILdw2IF2vENqGOS"></span></div>
   <div class="row" style="margin-top:6px" data-page-node-id="Firryb3JpIGNchycNTqvEN"><span class="lb" data-page-node-id="6XtnGYxqOYaFB6IHm2nvFE">文字颜色</span>
     <button class="mini-btn" id="t-light" data-page-node-id="vN9cDNBPEmhGycpeK8GomY">亮色字</button><button class="mini-btn" id="t-dark" data-page-node-id="QHS0ed5URZyUzA0GRGDmHP">暗色字</button>
@@ -966,12 +970,28 @@ grip.addEventListener('pointerdown', e=>{
       h=h0+(ev.screenY-y0)*zoom;
       if(!frame) frame=requestAnimationFrame(()=>{ frame=0; requestWindowSize(w,h,false); });
     };
-    grip.addEventListener('pointermove',move);
-    grip.addEventListener('lostpointercapture',()=>{
-      grip.removeEventListener('pointermove',move);
+    const finish = commit=>{
       if(frame) cancelAnimationFrame(frame);
-      if(w!==w0 || h!==h0) requestWindowSize(w,h,true);
-    },{once:true});
+      grip.removeEventListener('pointermove',move);
+      grip.removeEventListener('pointerup',release);
+      grip.removeEventListener('lostpointercapture',cancel);
+      document.removeEventListener('keydown',escape);
+      if(grip.hasPointerCapture(e.pointerId)) grip.releasePointerCapture(e.pointerId);
+      if(commit && (w!==w0 || h!==h0)) requestWindowSize(w,h,true);
+      else windowsHost.postMessage('resize-cancel');
+    };
+    const release = ev=>{
+      w=w0+(ev.screenX-x0)*zoom;
+      h=h0+(ev.screenY-y0)*zoom;
+      finish(true);
+    };
+    const cancel = ()=>finish(false);
+    const escape = ev=>{ if(ev.key==='Escape') cancel(); };
+    grip.addEventListener('pointermove',move);
+    grip.addEventListener('pointerup',release);
+    grip.addEventListener('lostpointercapture',cancel);
+    document.addEventListener('keydown',escape);
+    requestWindowSize(w,h,false);
     return;
   }
   const x0=e.screenX, y0=e.screenY, w0=S.settings.w, s0=S.settings.scale;
@@ -980,7 +1000,7 @@ grip.addEventListener('pointerdown', e=>{
     S.settings.scale = Math.min(160, Math.max(70, Math.round((s0 + (ev.screenY-y0)*0.35)/5)*5));
     applySettings();
     $('v-size').textContent = S.settings.w; $('r-size').value = S.settings.w;
-    $('v-scale').textContent = S.settings.scale+'%'; $('r-scale').value = S.settings.scale;
+    $('v-scale').value = S.settings.scale; $('r-scale').value = S.settings.scale;
   };
   const finish = ()=>{
     grip.removeEventListener('pointermove', move);
@@ -1112,8 +1132,8 @@ panel.addEventListener('click', e=>e.stopPropagation());
 function renderSettings(){
   const st = S.settings;
   $('r-size').value = st.w;     $('v-size').textContent = st.w;
-  $('r-scale').value = st.scale; $('v-scale').textContent = st.scale+'%';
-  $('r-alpha').value = st.alpha; $('v-alpha').textContent = st.alpha+'%';
+  $('r-scale').value = st.scale; $('v-scale').value = st.scale;
+  $('r-alpha').value = st.alpha; $('v-alpha').value = st.alpha;
   if(windowsHost){
     showWindowSize();
     $('window-size-status').textContent = '';
@@ -1128,8 +1148,30 @@ function renderSettings(){
   renderCatList();
 }
 $('r-size').oninput = e=>{ S.settings.w=+e.target.value; $('v-size').textContent=S.settings.w; saveSet(); applySettings(); render(); };
-$('r-scale').oninput = e=>{ S.settings.scale=+e.target.value; $('v-scale').textContent=S.settings.scale+'%'; saveSet(); applySettings(); render(); };
-$('r-alpha').oninput = e=>{ S.settings.alpha=+e.target.value; $('v-alpha').textContent=S.settings.alpha+'%'; saveSet(); applySettings(); };
+for(const setting of ['scale','alpha']){
+  const slider = $('r-'+setting), field = $('v-'+setting);
+  const apply = value=>{
+    slider.value = field.value = value;
+    if(S.settings[setting]===value) return;
+    S.settings[setting]=value;
+    saveSet();
+    if(setting==='scale') render();
+    else applySettings();
+  };
+  const commit = ()=>{
+    const value = field.value.trim();
+    if(!/^\d{1,9}$/.test(value)){
+      field.value=slider.value;
+      return;
+    }
+    apply(Math.min(+slider.max, Math.max(+slider.min, +value)));
+  };
+  slider.oninput = ()=>apply(+slider.value);
+  field.onblur = commit;
+  field.onkeydown = e=>{
+    if(e.key==='Enter'){ e.preventDefault(); commit(); }
+  };
+}
 $('r-blur').oninput = e=>{
   S.settings.blur = windowsHost ? (e.target.checked ? 28 : 0) : +e.target.value;
   $('v-blur').textContent = windowsHost ? (e.target.checked ? '系统' : '关') : S.settings.blur+'px';
@@ -1351,7 +1393,7 @@ if(syncEnabled){
 (function(){
   const v = new URLSearchParams(location.search).get('v') || '?';
   const el = document.getElementById('build-tag');
-  if(el) el.textContent = windowsHost ? 'DeskCal 1.0.6' : 'v' + v;
+  if(el) el.textContent = windowsHost ? 'DeskCal 1.0.7' : 'v' + v;
   try{ console.log('[deskcal] build v' + v + ' loaded @ ' + new Date().toISOString()); }catch(e){}
 })();
 </script>
