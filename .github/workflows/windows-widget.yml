@@ -42,9 +42,16 @@ jobs:
         run: |
           $logs = Get-ChildItem "$env:LOCALAPPDATA/DeskCal/logs/acrylic-diagnostic-*.log"
           $text = ($logs | Get-Content) -join "`n"
-          foreach ($key in @('SourceInitialized','ContentRendered','DwmExtend requested=', 'diag grip down','edge restore requested','after Show','controller=', ' raster=', 'Closed')) {
+          foreach ($key in @('SourceInitialized','ContentRendered','DwmExtend requested=', 'diag grip down','edge restore requested','after Show','controller=', ' raster=', 'Closed', 'DOM sample after MARK BEFORE_MANUAL_RESIZE', 'A/B after toggle', 'webVisible=Hidden/False')) {
             if (!$text.Contains($key)) { throw "Missing evidence $key" }
           }
+          Copy-Item docs/acrylic-diagnostic.md Windows/bin/Release/net48/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Synthetic-lifecycle-logs-${{ matrix.os }}
+          path: ~/AppData/Local/DeskCal/logs/acrylic-diagnostic-*.log
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         if: always()
         with:

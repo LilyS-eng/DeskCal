@@ -322,6 +322,10 @@ def probe_backdrop(app):
 
 def drag_resize(app):
     left,top,right,bottom = window_geometry(app.hwnd)
+    for vk in (0x11, 0x12, ord("2")):
+        key(vk, 0, 0, 0)
+    for vk in (ord("2"), 0x12, 0x11):
+        key(vk, 0, 2, 0)
     point = app.point("#grip")
     assert move(point.x,point.y)
     mouse(2,0,0,0,0)
@@ -379,6 +383,8 @@ def run(exe, profile):
     current = "JSON.parse(localStorage.getItem('deskcal-personal-v1')||'{\"todos\":[]}').todos"
     app = Widget(exe, profile)
     try:
+        app.js("tray:diagnostic-ab")
+        app.js("tray:diagnostic-ab")
         assert app.js(current + ".length") == 0
         ex = style(app.hwnd, -20)
         assert ex & 0x80 and not ex & (0x40000 | 0x20 | 0x08000000 | 0x80000 | 0x8), hex(ex)

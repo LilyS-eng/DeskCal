@@ -91,6 +91,12 @@ internal class InputObserver
             if (expression == "tray:left")
                 typeof(Forms.NotifyIcon).GetMethod("OnMouseClick", BindingFlags.Instance | BindingFlags.NonPublic)
                     .Invoke(tray, new object[] { new Forms.MouseEventArgs(Forms.MouseButtons.Left, 1, 0, 0, 0) });
+            else if (expression == "tray:diagnostic-ab")
+            {
+                var diagnostic = tray.ContextMenuStrip.Items.OfType<Forms.ToolStripMenuItem>()
+                    .Single(item => item.DropDownItems.Count >= 10);
+                diagnostic.DropDownItems[diagnostic.DropDownItems.Count - 1].PerformClick();
+            }
             else if (expression == "tray:exit")
                 tray.ContextMenuStrip.Items[tray.ContextMenuStrip.Items.Count - 1].PerformClick();
             return Task.FromResult("true");
