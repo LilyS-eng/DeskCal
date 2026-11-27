@@ -23,12 +23,22 @@ internal class InputObserver
     private static bool observed;
     private static readonly List<string> trace = new List<string>();
 
-    private static IntPtr Record(string target, int message, IntPtr position)
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
+
+    private static IntPtr Record(string target, IntPtr hwnd, int message, IntPtr position)
     {
         if (message == 0x18) trace.Add(target + ":WM_SHOWWINDOW");
         if (message == 0x47) trace.Add(target + ":WM_WINDOWPOSCHANGED");
-        if (message == 0x05) trace.Add(target + ":WM_SIZE " +
-            (position.ToInt64() & 0xffff) + "x" + ((position.ToInt64() >> 16) & 0xffff));
+        if (message == 0x05)
+        {
+            string cloak = "";
+            int flags;
+            if (target == "main" && DwmGetWindowAttribute(hwnd, 14, out flags, sizeof(int)) == 0)
+                cloak = " cloak=" + flags;
+            trace.Add(target + ":WM_SIZE " + (position.ToInt64() & 0xffff) + "x" +
+                ((position.ToInt64() >> 16) & 0xffff) + cloak);
+        }
         return IntPtr.Zero;
     }
 
@@ -40,13 +50,13 @@ internal class InputObserver
         trace.Add("Loaded");
         var source = (HwndSource)PresentationSource.FromVisual(widget);
         source.AddHook((IntPtr hwnd, int message, IntPtr parameter, IntPtr position, ref bool handled) =>
-            Record("main", message, position));
+            Record("main", hwnd, message, position));
         widget.SizeChanged += (_, size) => trace.Add("WPF SizeChanged " + size.NewSize);
         widget.IsVisibleChanged += (_, state) => trace.Add("WPF IsVisibleChanged " + state.NewValue);
         widget.ContentRendered += (_, __) => trace.Add("WPF ContentRendered");
         var browser = ((Panel)widget.Content).Children.OfType<WebView2>().Single();
         browser.MessageHook += (IntPtr hwnd, int message, IntPtr parameter, IntPtr position, ref bool handled) =>
-            Record("browser", message, position);
+            Record("browser", hwnd, message, position);
         browser.SizeChanged += (_, size) => trace.Add("Browser layout " + size.NewSize);
         browser.NavigationCompleted += (_, __) => trace.Add("Browser NavigationCompleted");
     }

@@ -426,6 +426,14 @@ def test_parameters(app):
     print("PASS: exact scale and opacity, Enter, blur, invalid/limits, and slider synchronization.",flush=True)
 
 
+def check_staged_trace(app, phase, minimum_sizes):
+    trace = app.js("trace:read")
+    sizes = [event for event in trace.split(" | ") if event.startswith("main:WM_SIZE")]
+    assert sum("cloak=1" in event for event in sizes)>=minimum_sizes, trace
+    assert trace.count("browser:WM_SIZE")>=minimum_sizes, trace
+    print(f"PASS: {phase}: {len(sizes)} parent size messages; browser bounds committed while cloaked.", flush=True)
+
+
 def run(exe, profile):
     current = "JSON.parse(localStorage.getItem('deskcal-personal-v1')||'{\"todos\":[]}').todos"
     app = Widget(exe, profile)
@@ -437,7 +445,7 @@ def run(exe, profile):
         print("Initial profile empty; Acrylic attribute enabled before resize, tool-window and input styles verified.", flush=True)
         if os.environ.get("GITHUB_ACTIONS") == "true":
             capture(app.hwnd)
-        print("Lifecycle cold (from Loaded):", app.js("trace:read"), flush=True)
+        check_staged_trace(app, "cold start from Loaded", 2)
         original = window_geometry(app.hwnd)
         corner, bounds = W.POINT(), W.RECT()
         assert origin(app.hwnd, C.byref(corner)) and rect(app.hwnd, C.byref(bounds))
@@ -461,7 +469,7 @@ def run(exe, profile):
             time.sleep(.3)
             assert window_geometry(app.hwnd) == original
             assert_acrylic(app.hwnd)
-        print("Lifecycle tray restore:", app.js("trace:read"), flush=True)
+        check_staged_trace(app, "five tray restores", 10)
         app.js("tray:left")
         wait(lambda: not visible(app.hwnd), "tray click also hides")
         app.js("tray:left")
@@ -482,8 +490,11 @@ def run(exe, profile):
         app.click("#add")
         app.until("document.activeElement.id==='f-title'")
         type_letters("deskcal")
+        choice = "#f-cats button:nth-child(2)"
+        category = app.js(f"document.querySelector({json.dumps(choice)}).dataset.id")
+        app.click(choice)
         app.click("#f-ok")
-        app.until(current + "[0]?.title==='deskcal'")
+        app.until(current + "[0]?.title==='deskcal' && " + current + "[0].cat===" + json.dumps(category))
         app.click(".todo .ck")
         app.click(".todo [data-edit]")
         app.click("#f-title")
@@ -527,7 +538,7 @@ def run(exe, profile):
         test_parameters(app)
         app.js("trace:read")
         test_edges(app)
-        print("Lifecycle dock:", app.js("trace:read"), flush=True)
+        check_staged_trace(app, "five edge restores per side", 20)
     finally:
         app.close()
     assert app.proc.returncode == 0, "Tray exit must end the process normally"
@@ -593,10 +604,14 @@ def test_reminders(exe, profile):
         assert not find(None, caption), "Reminder duplicated after restart"
         app.click("#bak")
         app.click(".bak-row [data-edit]")
-        new_due = due_after(1 if datetime.now().second < 50 else 2)
+        new_due = due_after(1 if datetime.now().second < 46 else 2)
         set_time(app, new_due)
+        drag_widget(app,work_area().left+4)
+        tab = wait(lambda: find(None,"DeskCal \u8fb9\u7f18\u628a\u624b"),"reminder test dock handle")
+        wait(lambda: visible(tab) and not visible(app.hwnd),"edge hidden before scheduled time")
         expect_popup(app, new_due, 2)
-        print("PASS: hidden reminder after restart, persisted deduplication, edited time fires again.", flush=True)
+        assert visible(tab) and not visible(app.hwnd)
+        print("PASS: reminders when tray-hidden and edge-hidden, restart deduplication and edited time.", flush=True)
     finally:
         app.close(verify=True)
 
